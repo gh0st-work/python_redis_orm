@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "python-redis-orm"
+version = "0.1.0"
+description = "Python Redis ORM, turns redis to a fully functional in-memory database, inspired by Django ORM"
+authors = ["Anton Nechaev <antonnechaev990@gmail.com>"]
+readme = "README.md"
+repository = "https://github.com/gh0st-work/python_redis_orm"
+homepage = "https://github.com/gh0st-work/python_redis_orm"
+keywords = ["python", "redis", "ORM", "django", "database"]
+license = "MIT"
+
+[tool.poetry.dependencies]
+python = "^3.6"
+redis = "^3.5.3"
+
+[tool.poetry.dev-dependencies]
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
