@@ -1,4 +1,4 @@
-# from ..models import Proxy
+import datetime
 import random
 from time import sleep
 from python_redis_orm.core import *
@@ -15,10 +15,8 @@ def generate_token_12_chars():
 
 
 class BotSession(RedisModel):
-    account = RedisNumber()
     session_token = RedisString(default=generate_token_12_chars)
-    soft = RedisNumber()
-    created = RedisDatetime(default=datetime.datetime.now)
+    created = RedisDateTime(default=datetime.datetime.now)
 
 
 class TaskChallenge(RedisModel):
@@ -33,13 +31,23 @@ class TaskChallenge(RedisModel):
         'failed_bot': 'Зафейлил бот',
         'failed_task_creator': 'Зафейлил создатель задания',
     }, null=False)
-    completed_and_checked_in = RedisDatetime()
     account_checks_count = RedisNumber(default=0)
-    created = RedisDatetime(default=datetime.datetime.now)
+    created = RedisDateTime(default=datetime.datetime.now)
 
 
 class TtlCheckModel(RedisModel):
     redis_number_with_ttl = RedisNumber(default=0, null=False, ttl=5)
+
+
+class MetaTtlCheckModel(RedisModel):
+    redis_number = RedisNumber(default=0, null=False)
+
+    class Meta:
+        ttl = 5
+
+
+# class DjangoForeignKeyModel(RedisModel):
+#     foreign_key = RedisDjangoForeignKey(model=Proxy)
 
 
 def get_redis_instance():
@@ -180,20 +188,44 @@ def filter_test(redis_instance, prefix):
         ignore_deserialization_errors=True
     )
     have_exception = True
-    # try:
-    same_tokens_count = 2
-    random_tokens_count = 8
-    same_token = generate_token(50)
-    random_tokens = [generate_token(50) for i in range(random_tokens_count)]
-    for i in range(same_tokens_count):
-        BotSession(redis_root, session_token=same_token).save()
-    for random_token in random_tokens:
-        BotSession(redis_root, session_token=random_token).save()
-    task_challenges_with_same_token = redis_root.get(BotSession, session_token=same_token)
-    if len(task_challenges_with_same_token) == same_tokens_count:
-        have_exception = False
-    # except BaseException as ex:
-    #     print(ex)
+    try:
+        same_tokens_count = 2
+        random_tokens_count = 8
+        same_token = generate_token(50)
+        random_tokens = [generate_token(50) for i in range(random_tokens_count)]
+        for i in range(same_tokens_count):
+            BotSession(redis_root, session_token=same_token).save()
+        for random_token in random_tokens:
+            BotSession(redis_root, session_token=random_token).save()
+        task_challenges_with_same_token = redis_root.get(BotSession, session_token=same_token)
+        if len(task_challenges_with_same_token) == same_tokens_count:
+            have_exception = False
+    except BaseException as ex:
+        print(ex)
+
+    clean_db_after_test(redis_instance, prefix)
+    return have_exception
+
+
+def update_test(redis_instance, prefix):
+    redis_root = RedisRoot(
+        prefix=prefix,
+        redis_instance=redis_instance,
+        ignore_deserialization_errors=True
+    )
+    have_exception = True
+    try:
+        bot_session_1 = BotSession(redis_root, session_token='123').save()
+        bot_session_1_id = bot_session_1['id']
+        redis_root.update(BotSession, bot_session_1, session_token='234')
+        bot_sessions_filtered = redis_root.get(BotSession, id=bot_session_1_id)
+        if len(bot_sessions_filtered) == 1:
+            bot_session_1_new = bot_sessions_filtered[0]
+            if 'session_token' in bot_session_1_new.keys():
+                if bot_session_1_new['session_token'] == '234':
+                    have_exception = False
+    except BaseException as ex:
+        print(ex)
 
     clean_db_after_test(redis_instance, prefix)
     return have_exception
@@ -213,6 +245,7 @@ def functions_like_defaults_test(redis_instance, prefix):
             have_exception = True
     except BaseException as ex:
         pass
+
     clean_db_after_test(redis_instance, prefix)
     return have_exception
 
@@ -241,6 +274,7 @@ def redis_foreign_key_test(redis_instance, prefix):
                 have_exception = False
     except BaseException as ex:
         print(ex)
+
     clean_db_after_test(redis_instance, prefix)
     return have_exception
 
@@ -291,6 +325,7 @@ def delete_test(redis_instance, prefix):
             have_exception = False
     except BaseException as ex:
         print(ex)
+
     clean_db_after_test(redis_instance, prefix)
     return have_exception
 
@@ -318,6 +353,7 @@ def ttl_test(redis_instance, prefix):
                         have_exception = False
     except BaseException as ex:
         print(ex)
+
     clean_db_after_test(redis_instance, prefix)
     return have_exception
 
@@ -346,11 +382,87 @@ def save_consistency_test(redis_instance, prefix):
                         have_exception = False
     except BaseException as ex:
         print(ex)
+
     clean_db_after_test(redis_instance, prefix)
     return have_exception
 
 
-if __name__ == '__main__':
+def meta_ttl_test(redis_instance, prefix):
+    redis_root = RedisRoot(
+        prefix=prefix,
+        redis_instance=redis_instance,
+        ignore_deserialization_errors=True,
+    )
+    have_exception = True
+    try:
+        meta_ttl_check_model_1 = MetaTtlCheckModel(
+            redis_root=redis_root,
+        ).save()
+        meta_ttl_check_models = redis_root.get(MetaTtlCheckModel)
+        if len(meta_ttl_check_models):
+            meta_ttl_check_model = meta_ttl_check_models[0]
+            if 'redis_number' in meta_ttl_check_model.keys():
+                sleep(6)
+                meta_ttl_check_models = redis_root.get(MetaTtlCheckModel)
+                if not len(meta_ttl_check_models):
+                    have_exception = False
+    except BaseException as ex:
+        print(ex)
+
+    clean_db_after_test(redis_instance, prefix)
+    return have_exception
+
+
+def economy_test(redis_instance, prefix):
+    have_exception = True
+    try:
+
+        redis_root = RedisRoot(
+            prefix=prefix,
+            redis_instance=redis_instance,
+            ignore_deserialization_errors=True,
+            economy=True
+        )
+        started_in_economy = datetime.datetime.now()
+        for i in range(10):
+            task_challenge_1 = TaskChallenge(
+                redis_root=redis_root,
+                status='in_work',
+            ).save()
+            redis_root.update(TaskChallenge, task_challenge_1, account_checks_count=1)
+        ended_in_economy = datetime.datetime.now()
+        economy_time = (ended_in_economy - started_in_economy).total_seconds()
+        clean_db_after_test(redis_instance, prefix)
+
+        redis_root = RedisRoot(
+            prefix=prefix,
+            redis_instance=redis_instance,
+            ignore_deserialization_errors=True,
+            economy=False
+        )
+        started_in_no_economy = datetime.datetime.now()
+        for i in range(10):
+            task_challenge_1 = TaskChallenge(
+                redis_root=redis_root,
+                status='in_work',
+            ).save()
+            redis_root.update(TaskChallenge, task_challenge_1, account_checks_count=1)
+        ended_in_no_economy = datetime.datetime.now()
+        no_economy_time = (ended_in_no_economy - started_in_no_economy).total_seconds()
+        clean_db_after_test(redis_instance, prefix)
+        economy_percent = round((no_economy_time / economy_time - 1) * 100, 2)
+        economy_symbol = ('+' if economy_percent > 0 else '-')
+        print(f'Economy gives {economy_symbol}{economy_percent}% efficiency')
+        if economy_symbol == '+':
+            have_exception = False
+    except BaseException as ex:
+        print(ex)
+
+    clean_db_after_test(redis_instance, prefix)
+    return have_exception
+
+
+def run_tests():
     redis_instance = get_redis_instance()
     tests = [
         basic_test,
@@ -362,9 +474,12 @@ if __name__ == '__main__':
         functions_like_defaults_test,
         redis_foreign_key_test,
         # django_foreign_key_test,
+        update_test,
         delete_test,
         ttl_test,
         save_consistency_test,
+        meta_ttl_test,
+        economy_test,
     ]
     results = []
     started_in = datetime.datetime.now()
@@ -391,3 +506,7 @@ if __name__ == '__main__':
     print(f'\n'
           f'{results_success_count} / {len(results)} tests ran successfully\n'
           f'All tests completed in {time}s\n')
+
+
+if __name__ == '__main__':
+    run_tests()
