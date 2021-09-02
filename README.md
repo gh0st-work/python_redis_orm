@@ -24,8 +24,9 @@ For one project, I needed to work with redis, but redis-py provides a minimum le
     - RedisDateTime - for work with date and time, via python datetime
     - RedisForeignKey - for links to other redis models
 - All fields supports:
-    - Automatically serialization and deserialization
-    - TTL (Time To Live)
+    - Automatically serialization
+    - Automatically deserialization
+    - TTL (Time To Live) setting
     - Default values
     - Providing functions to default values
     - Allow null values setting
@@ -33,11 +34,11 @@ For one project, I needed to work with redis, but redis-py provides a minimum le
 - Built-in RedisModel class, with:
     - All fields that you want
     - TTL (Time To Live), applies if no ttl on field
-- CRUD (Create Read Update Delete), in our variation: save, filter, order, update, delete:
-    - example_instance = ExampleModel(example_field='example_data').save() - to create an instance and get its JSON
-    - filtered_example_instances = redis_root.get(ExampleModel, example_field='example_data') - to get all ExampleModel instances with example_field filter and get JSON
+- CRUD (Create Read Update Delete), in our variation: save, get, filter, order, update, delete:
+    - example_instance = ExampleModel(example_field='example_data').save() - to create an instance and get its data dict
+    - filtered_example_instances = redis_root.get(ExampleModel, example_field='example_data') - to get all ExampleModel instances with example_field filter and get its data dict
     - ordered_instances = redis_root.order(filtered_example_instances, '-id') - to get ordered filtered_example_instances by id ('-' for reverse)
-    - updated_example_instances = redis_root.update(ExampleModel, ordered_instances, example_field='another_example_data') - to update all ordered_instances example_field with value 'another_example_data' and get them in JSON
+    - updated_example_instances = redis_root.update(ExampleModel, ordered_instances, example_field='another_example_data') - to update all ordered_instances example_field with value 'another_example_data' and get its data dict
     - redis_root.delete(ExampleModel, updated_example_instances) - to delete updated_example_instances
 
 
@@ -52,6 +53,7 @@ Obviously, you need to install and run redis server on your machine, we support 
 # Usage
 
 All features:
+
 [full_test.py](https://github.com/gh0st-work/python_redis_orm/blob/master/python_redis_orm/tests/full_test.py)
 ```python
 import datetime

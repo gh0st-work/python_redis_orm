@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-redis-orm"
-version = "0.1.8"
+version = "0.1.9"
 description = "Python Redis ORM library turns redis to a fully functional in-memory database and speeds a developmet up, inspired by Django ORM"
 authors = ["Anton Nechaev <antonnechaev990@gmail.com>"]
 readme = "README.md"
