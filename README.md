@@ -1,4 +1,4 @@
-# redis-orm
+# python-redis-orm
 
 ## **Python Redis ORM, turns redis to a fully functional in-memory database, inspired by Django ORM**
 
@@ -10,8 +10,12 @@ For one project, I needed to work with redis, but redis-py provides a minimum le
 - Django-like architecture
 - Easy adaptation to your needs
 - Adequate informational messages and error messages
-- Built-in RedisModel class, with:
-    - TTL (Time To Live), applies if no ttl on field
+- Built-in RedisRoot class that stores specified models, with:
+    - redis_instance setting - your redis connection (from redis-py)
+    - prefix setting - prefix of this RedisRoot to be stored in redis
+    - ignore_deserialization_errors setting - do not raise errors, while deserealizing data
+    - save_consistency setting - show structure-first data
+    - economy setting - to not return full data and save some requests (usually, speeds up your app on 80%)
 - 6 built-in types of fields:
     - RedisField - base class for nesting
     - RedisString - string
@@ -26,9 +30,15 @@ For one project, I needed to work with redis, but redis-py provides a minimum le
     - Providing functions to default values
     - Allow null values setting
     - Choices
-- Extras:
-    - Ignore deserialization errors setting - do not raise errors, while deserealizing data
-    - Save consistency setting - show structure-first data
+- Built-in RedisModel class, with:
+    - All fields that you want
+    - TTL (Time To Live), applies if no ttl on field
+- CRUD (Create Read Update Delete), in our variation: save, filter, order, update, delete:
+    - example_instance = ExampleModel(example_field='example_data').save() - to create an instance and get its JSON
+    - filtered_example_instances = redis_root.get(ExampleModel, example_field='example_data') - to get all ExampleModel instances with example_field filter and get JSON
+    - ordered_instances = redis_root.order(filtered_example_instances, '-id') - to get ordered filtered_example_instances by id ('-' for reverse)
+    - updated_example_instances = redis_root.update(ExampleModel, ordered_instances, example_field='another_example_data') - to update all ordered_instances example_field with value 'another_example_data' and get them in JSON
+    - redis_root.delete(ExampleModel, updated_example_instances) - to delete updated_example_instances
 
 
 # Installation
