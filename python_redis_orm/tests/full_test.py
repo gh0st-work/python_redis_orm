@@ -1,3 +1,64 @@
+import datetime
+import random
+from time import sleep
+
+
+from python_redis_orm.core import *
+
+
+def generate_token(chars_count):
+    allowed_chars = 'QWERTYUIOPASDFGHJKLZXCVBNM1234567890'
+    token = f'{"".join([random.choice(allowed_chars) for i in range(chars_count)])}'
+    return token
+
+
+def generate_token_12_chars():
+    return generate_token(12)
+
+
+class BotSession(RedisModel):
+    session_token = RedisString(default=generate_token_12_chars)
+    created = RedisDateTime(default=datetime.datetime.now)
+
+
+class TaskChallenge(RedisModel):
+    bot_session = RedisForeignKey(model=BotSession)
+    task_id = RedisNumber(default=0, null=False)
+    status = RedisString(default='in_work', choices={
+        'in_work': 'В работе',
+        'completed': 'Завершён успешно',
+        'completed_frozen_points': 'Завершён успешно, получил поинты в холде',
+        'completed_points': 'Завершён успешно, получил поинты',
+        'completed_decommissioning': 'Завершён успешно, поинты списаны',
+        'failed_bot': 'Зафейлил бот',
+        'failed_task_creator': 'Зафейлил создатель задания',
+    }, null=False)
+    account_checks_count = RedisNumber(default=0)
+    created = RedisDateTime(default=datetime.datetime.now)
+
+
+class TtlCheckModel(RedisModel):
+    redis_number_with_ttl = RedisNumber(default=0, null=False, ttl=5)
+
+
+class MetaTtlCheckModel(RedisModel):
+    redis_number = RedisNumber(default=0, null=False)
+
+    class Meta:
+        ttl = 5
+
+
+class DictCheckModel(RedisModel):
+    redis_dict = RedisDict()
+
+
+class ListCheckModel(RedisModel):
+    redis_list = RedisList()
+
+
+# class DjangoForeignKeyModel(RedisModel):
+#     foreign_key = RedisDjangoForeignKey(model=Proxy)
+
 
 def get_redis_instance(connection_pool=None):
     REDIS_HOST = 'localhost'

@@ -1,6 +1,6 @@
 # python-redis-orm
 
-## **Python Redis ORM library that gives redis easy-to-use objectsand fields and speeds a developmet up, inspired by Django ORM**
+## **Python Redis ORM library that gives redis easy-to-use objects with fields and speeds a developmet up, inspired by Django ORM**
 
 For one project, I needed to work with redis, but redis-py provides a minimum level of work with redis. I didn't find any Django-like ORM for redis, so I wrote this library, then there will be a port to Django.
 
@@ -59,6 +59,67 @@ All features:
 
 [full_test.py](https://github.com/gh0st-work/python_redis_orm/blob/master/python_redis_orm/tests/full_test.py)
 ```python
+import datetime
+import random
+from time import sleep
+
+
+from python_redis_orm.core import *
+
+
+def generate_token(chars_count):
+    allowed_chars = 'QWERTYUIOPASDFGHJKLZXCVBNM1234567890'
+    token = f'{"".join([random.choice(allowed_chars) for i in range(chars_count)])}'
+    return token
+
+
+def generate_token_12_chars():
+    return generate_token(12)
+
+
+class BotSession(RedisModel):
+    session_token = RedisString(default=generate_token_12_chars)
+    created = RedisDateTime(default=datetime.datetime.now)
+
+
+class TaskChallenge(RedisModel):
+    bot_session = RedisForeignKey(model=BotSession)
+    task_id = RedisNumber(default=0, null=False)
+    status = RedisString(default='in_work', choices={
+        'in_work': 'В работе',
+        'completed': 'Завершён успешно',
+        'completed_frozen_points': 'Завершён успешно, получил поинты в холде',
+        'completed_points': 'Завершён успешно, получил поинты',
+        'completed_decommissioning': 'Завершён успешно, поинты списаны',
+        'failed_bot': 'Зафейлил бот',
+        'failed_task_creator': 'Зафейлил создатель задания',
+    }, null=False)
+    account_checks_count = RedisNumber(default=0)
+    created = RedisDateTime(default=datetime.datetime.now)
+
+
+class TtlCheckModel(RedisModel):
+    redis_number_with_ttl = RedisNumber(default=0, null=False, ttl=5)
+
+
+class MetaTtlCheckModel(RedisModel):
+    redis_number = RedisNumber(default=0, null=False)
+
+    class Meta:
+        ttl = 5
+
+
+class DictCheckModel(RedisModel):
+    redis_dict = RedisDict()
+
+
+class ListCheckModel(RedisModel):
+    redis_list = RedisList()
+
+
+# class DjangoForeignKeyModel(RedisModel):
+#     foreign_key = RedisDjangoForeignKey(model=Proxy)
+
 
 def get_redis_instance(connection_pool=None):
     REDIS_HOST = 'localhost'
