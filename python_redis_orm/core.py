@@ -1,3 +1,5 @@
+import asyncio
+import json
 from copy import deepcopy
 import redis
 import datetime
@@ -62,9 +64,6 @@ class RedisField:
 
 class RedisString(RedisField):
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
     def clean(self):
         self.value = self.check_value()
         if self.value and self.value != 'null':
@@ -80,9 +79,6 @@ class RedisString(RedisField):
 
 class RedisNumber(RedisField):
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
     def clean(self):
         self.value = self.check_value()
         if self.value and self.value != 'null':
@@ -97,7 +93,7 @@ class RedisNumber(RedisField):
             else:
                 value = int(value)
         else:
-            return 0
+            value = 0
         return value
 
 
@@ -109,9 +105,6 @@ class RedisId(RedisNumber):
 
 
 class RedisDateTime(RedisNumber):
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
 
     def clean(self):
         self.value = self.check_value()
@@ -175,6 +168,61 @@ class RedisForeignKey(RedisNumber):
             value = super().deserialize_value(value, redis_root)
             check_types(value, int)
             value = self._get_instance_by_id(value, redis_root)
+        return value
+
+
+class RedisJson(RedisField):
+
+    def __init__(self, json_allowed_types=(list, dict), **kwargs):
+        self.json_allowed_types = json_allowed_types
+        super().__init__(**kwargs)
+
+    def set_json_allowed_types(self, allowed_types):
+        self.json_allowed_types = allowed_types
+        return self.json_allowed_types
+
+    def clean(self):
+        self.value = self.check_value()
+        if self.value and self.value != 'null':
+            check_types(self.value, self.json_allowed_types)
+            json_string = json.dumps(self.value)
+            self.value = json_string
+        return super().clean()
+
+    def deserialize_value(self, value, redis_root):
+        self.deserialize_value_check_null(value, redis_root)
+        if value != 'null':
+            check_types(value, str)
+            value = json.loads(value)
+            check_types(value, self.json_allowed_types)
+        return value
+
+
+class RedisDict(RedisJson):
+
+    def clean(self):
+        self.set_json_allowed_types(dict)
+        return super().clean()
+
+    def deserialize_value(self, value, redis_root):
+        self.set_json_allowed_types(dict)
+        self.deserialize_value_check_null(value, redis_root)
+        if value != 'null':
+            value = super().deserialize_value(value, redis_root)
+        return value
+
+
+class RedisList(RedisJson):
+
+    def clean(self):
+        self.set_json_allowed_types(list)
+        return super().clean()
+
+    def deserialize_value(self, value, redis_root):
+        self.set_json_allowed_types(list)
+        self.deserialize_value_check_null(value, redis_root)
+        if value != 'null':
+            value = super().deserialize_value(value, redis_root)
         return value
 
 
@@ -691,4 +739,66 @@ class RedisModel:
         else:
             deserialized_instance = redis_root.get(self.__class__, id=self.id.value)[0]
         return deserialized_instance
+
+
+import datetime
+import random
+from time import sleep
+
+
+# from python_redis_orm.core import *
+
+
+def generate_token(chars_count):
+    allowed_chars = 'QWERTYUIOPASDFGHJKLZXCVBNM1234567890'
+    token = f'{"".join([random.choice(allowed_chars) for i in range(chars_count)])}'
+    return token
+
+
+def generate_token_12_chars():
+    return generate_token(12)
+
+
+class BotSession(RedisModel):
+    session_token = RedisString(default=generate_token_12_chars)
+    created = RedisDateTime(default=datetime.datetime.now)
+
+
+class TaskChallenge(RedisModel):
+    bot_session = RedisForeignKey(model=BotSession)
+    task_id = RedisNumber(default=0, null=False)
+    status = RedisString(default='in_work', choices={
+        'in_work': 'В работе',
+        'completed': 'Завершён успешно',
+        'completed_frozen_points': 'Завершён успешно, получил поинты в холде',
+        'completed_points': 'Завершён успешно, получил поинты',
+        'completed_decommissioning': 'Завершён успешно, поинты списаны',
+        'failed_bot': 'Зафейлил бот',
+        'failed_task_creator': 'Зафейлил создатель задания',
+    }, null=False)
+    account_checks_count = RedisNumber(default=0)
+    created = RedisDateTime(default=datetime.datetime.now)
+
+
+class TtlCheckModel(RedisModel):
+    redis_number_with_ttl = RedisNumber(default=0, null=False, ttl=5)
+
+
+class MetaTtlCheckModel(RedisModel):
+    redis_number = RedisNumber(default=0, null=False)
+
+    class Meta:
+        ttl = 5
+
+
+class DictCheckModel(RedisModel):
+    redis_dict = RedisDict()
+
+
+class ListCheckModel(RedisModel):
+    redis_list = RedisList()
+
+
+# class DjangoForeignKeyModel(RedisModel):
+#     foreign_key = RedisDjangoForeignKey(model=Proxy)
 

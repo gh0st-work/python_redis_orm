@@ -1,63 +1,13 @@
-import datetime
-import random
-from time import sleep
-from python_redis_orm.core import *
 
-
-def generate_token(chars_count):
-    allowed_chars = 'QWERTYUIOPASDFGHJKLZXCVBNM1234567890'
-    token = f'{"".join([random.choice(allowed_chars) for i in range(chars_count)])}'
-    return token
-
-
-def generate_token_12_chars():
-    return generate_token(12)
-
-
-class BotSession(RedisModel):
-    session_token = RedisString(default=generate_token_12_chars)
-    created = RedisDateTime(default=datetime.datetime.now)
-
-
-class TaskChallenge(RedisModel):
-    bot_session = RedisForeignKey(model=BotSession)
-    task_id = RedisNumber(default=0, null=False)
-    status = RedisString(default='in_work', choices={
-        'in_work': 'В работе',
-        'completed': 'Завершён успешно',
-        'completed_frozen_points': 'Завершён успешно, получил поинты в холде',
-        'completed_points': 'Завершён успешно, получил поинты',
-        'completed_decommissioning': 'Завершён успешно, поинты списаны',
-        'failed_bot': 'Зафейлил бот',
-        'failed_task_creator': 'Зафейлил создатель задания',
-    }, null=False)
-    account_checks_count = RedisNumber(default=0)
-    created = RedisDateTime(default=datetime.datetime.now)
-
-
-class TtlCheckModel(RedisModel):
-    redis_number_with_ttl = RedisNumber(default=0, null=False, ttl=5)
-
-
-class MetaTtlCheckModel(RedisModel):
-    redis_number = RedisNumber(default=0, null=False)
-
-    class Meta:
-        ttl = 5
-
-
-# class DjangoForeignKeyModel(RedisModel):
-#     foreign_key = RedisDjangoForeignKey(model=Proxy)
-
-
-def get_redis_instance():
+def get_redis_instance(connection_pool=None):
     REDIS_HOST = 'localhost'
     REDIS_PORT = 6379
-    redis_instance = redis.StrictRedis(
+    redis_instance = redis.Redis(
         decode_responses=True,
         host=REDIS_HOST,
         port=REDIS_PORT,
         db=0,
+        connection_pool=connection_pool
     )
     return redis_instance
 
@@ -451,10 +401,215 @@ def economy_test(redis_instance, prefix):
         no_economy_time = (ended_in_no_economy - started_in_no_economy).total_seconds()
         clean_db_after_test(redis_instance, prefix)
         economy_percent = round((no_economy_time / economy_time - 1) * 100, 2)
-        economy_symbol = ('+' if economy_percent > 0 else '-')
+        economy_symbol = ('+' if economy_percent > 0 else '')
         print(f'Economy gives {economy_symbol}{economy_percent}% efficiency')
         if economy_symbol == '+':
             have_exception = False
+    except BaseException as ex:
+        print(ex)
+
+    clean_db_after_test(redis_instance, prefix)
+    return have_exception
+
+
+def dict_test(redis_instance, prefix):
+    redis_root = RedisRoot(
+        prefix=prefix,
+        redis_instance=redis_instance,
+        ignore_deserialization_errors=True
+    )
+    have_exception = True
+    try:
+        some_dict = {
+            'age': 19,
+            'weed': True
+        }
+        DictCheckModel(
+            redis_root=redis_root,
+            redis_dict=some_dict
+        ).save()
+        dict_check_model_instance = redis_root.get(DictCheckModel)[0]
+        if 'redis_dict' in dict_check_model_instance.keys():
+            if dict_check_model_instance['redis_dict'] == some_dict:
+                have_exception = False
+    except BaseException as ex:
+        print(ex)
+
+    clean_db_after_test(redis_instance, prefix)
+    return have_exception
+
+
+def list_test(redis_instance, prefix):
+    redis_root = RedisRoot(
+        prefix=prefix,
+        redis_instance=redis_instance,
+        ignore_deserialization_errors=True
+    )
+    have_exception = True
+    try:
+        some_list = [5, 9, 's', 4.5, False]
+        ListCheckModel(
+            redis_root=redis_root,
+            redis_list=some_list
+        ).save()
+        list_check_model_instance = redis_root.get(ListCheckModel)[0]
+        if 'redis_list' in list_check_model_instance.keys():
+            if list_check_model_instance['redis_list'] == some_list:
+                have_exception = False
+    except BaseException as ex:
+        print(ex)
+
+    clean_db_after_test(redis_instance, prefix)
+    return have_exception
+
+
+def async_test(redis_instance, prefix):
+    have_exception = True
+    try:
+
+        async def async_task(data_count, use_async=True):
+            redis_roots = []
+            connection_pool = redis.ConnectionPool(host='localhost', port=6379, db=0, decode_responses=True)
+            for i in range(data_count):
+                redis_instance = get_redis_instance(connection_pool)
+                redis_root = RedisRoot(
+                    prefix=prefix,
+                    redis_instance=redis_instance,
+                    ignore_deserialization_errors=True
+                )
+                redis_roots.append(redis_root)
+
+            async def create_list(redis_roots, redis_root_index, list_length):
+                some_list = [random.choice('ABCDEF') for i in range(list_length)]
+                redis_root = redis_roots[redis_root_index]
+                list_check_model_instance = ListCheckModel(
+                    redis_root=redis_root,
+                    redis_list=some_list
+                ).save()
+                return {
+                    'list': some_list,
+                    'id': list_check_model_instance['id']
+                }
+
+            async def get_object_existence(redis_roots, redis_root_index, lists_with_ids):
+                exists = False
+                redis_root = redis_roots[redis_root_index]
+                objects = redis_root.get(ListCheckModel, redis_list=lists_with_ids['list'])
+                if objects:
+                    if len(objects) == 1:
+                        exists = objects[0]['id'] == lists_with_ids['id']
+                return exists
+
+            async def update_list(redis_roots, redis_root_index, lists_with_ids):
+                result = False
+                redis_root = redis_roots[redis_root_index]
+                objects = redis_root.get(ListCheckModel, redis_list=lists_with_ids['list'])
+                if objects:
+                    if len(objects) == 1:
+                        obj = objects[0]
+                        new_list = deepcopy(lists_with_ids['list'])
+                        new_list.append('check_value')
+                        updated_obj = redis_root.update(ListCheckModel, obj, redis_list=new_list)
+                        updated_objects = redis_root.get(ListCheckModel, redis_list=new_list)
+                        if updated_objects:
+                            if len(updated_objects) == 1:
+                                result = updated_objects[0]['id'] == lists_with_ids['id']
+                return result
+
+            async def delete_list(redis_roots, redis_root_index, id):
+                result = False
+                redis_root = redis_roots[redis_root_index]
+                objects = redis_root.get(ListCheckModel, id=id)
+                if objects:
+                    if len(objects) == 1:
+                        obj = objects[0]
+                        redis_root.delete(ListCheckModel, obj)
+                        objects = redis_root.get(ListCheckModel, id=id)
+                        if not objects:
+                            result = True
+                return result
+
+            async def create_lists(lists_count, use_async=True):
+                if use_async:
+                    async_create_lists_tasks = [
+                        create_list(redis_roots, i, i + 100)
+                        for i in range(lists_count)
+                    ]
+                    list_of_lists_with_ids = await asyncio.gather(*async_create_lists_tasks)
+                else:
+                    list_of_lists_with_ids = [
+                        await create_list(redis_roots, i, i + 100)
+                        for i in range(lists_count)
+                    ]
+                return list_of_lists_with_ids
+
+            async def get_objects_existence(list_of_lists_with_ids, use_async=True):
+                if use_async:
+                    async_get_object_by_list_tasks = [
+                        get_object_existence(redis_roots, i, lists_with_ids)
+                        for i, lists_with_ids in enumerate(list_of_lists_with_ids)
+                    ]
+                    list_of_results = await asyncio.gather(*async_get_object_by_list_tasks)
+                else:
+                    list_of_results = [
+                        await get_object_existence(redis_roots, i, lists_with_ids)
+                        for i, lists_with_ids in enumerate(list_of_lists_with_ids)
+                    ]
+                return list_of_results
+
+            async def update_lists(list_of_lists_with_ids, use_async=True):
+                if use_async:
+                    async_update_list_tasks = [
+                        update_list(redis_roots, i, lists_with_ids)
+                        for i, lists_with_ids in enumerate(list_of_lists_with_ids)
+                    ]
+                    list_of_results = await asyncio.gather(*async_update_list_tasks)
+                else:
+                    list_of_results = [
+                        await update_list(redis_roots, i, lists_with_ids)
+                        for i, lists_with_ids in enumerate(list_of_lists_with_ids)
+                    ]
+                return list_of_results
+
+            async def delete_lists(list_of_lists_with_ids, use_async=True):
+                if use_async:
+                    async_delete_list_tasks = [
+                        delete_list(redis_roots, i, lists_with_ids['id'])
+                        for i, lists_with_ids in enumerate(list_of_lists_with_ids)
+                    ]
+                    list_of_results = await asyncio.gather(*async_delete_list_tasks)
+                else:
+                    list_of_results = [
+                        await delete_list(redis_roots, i, lists_with_ids)
+                        for i, lists_with_ids in enumerate(list_of_lists_with_ids)
+                    ]
+                return list_of_results
+
+
+
+            list_of_lists_with_ids = await create_lists(data_count, use_async)
+            list_of_results = await get_objects_existence(list_of_lists_with_ids, use_async)
+            if all(list_of_results):
+                list_of_results = await update_lists(list_of_lists_with_ids, use_async)
+                if all(list_of_results):
+                    list_of_results = await delete_lists(list_of_lists_with_ids, use_async)
+            return all(list_of_results)
+
+        data_count = 10
+        async_started_in = datetime.datetime.now()
+        async_result = asyncio.run(async_task(data_count))
+        async_ended_in = datetime.datetime.now()
+        async_time = (async_ended_in - async_started_in).total_seconds()
+        have_exception = not async_result
+        sync_started_in = datetime.datetime.now()
+        sync_result = asyncio.run(async_task(data_count, False))
+        sync_ended_in = datetime.datetime.now()
+        sync_time = (sync_ended_in - sync_started_in).total_seconds()
+
+        async_percent = round((async_time / sync_time - 1) * 100, 2)
+        async_symbol = ('+' if async_percent > 0 else '')
+        print(f'Async gives {async_symbol}{async_percent}% efficiency')
+
     except BaseException as ex:
         print(ex)
 
@@ -480,6 +635,9 @@ def run_tests():
         save_consistency_test,
         meta_ttl_test,
         economy_test,
+        list_test,
+        dict_test,
+        async_test,
     ]
     results = []
     started_in = datetime.datetime.now()
