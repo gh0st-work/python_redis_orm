@@ -34,5 +34,4 @@ jobs:
         flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
     - name: Run full test
       run: |
-        git clone https://github.com/gh0st-work/python_redis_orm.git
         python python_redis_orm/tests/full_test.py
