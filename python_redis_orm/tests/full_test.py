@@ -1,4 +1,5 @@
 import random
+import sys
 from time import sleep
 import asyncio
 import os
@@ -721,7 +722,11 @@ def run_tests():
     print(f'\n'
           f'{results_success_count} / {len(results)} tests ran successfully\n'
           f'All tests completed in {time}s\n')
+    
+    return all(results)
 
 
 if __name__ == '__main__':
-    run_tests()
+    results = run_tests()
+    if not results:
+        sys.exit(1)
