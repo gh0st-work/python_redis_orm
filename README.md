@@ -1,6 +1,6 @@
 # python-redis-orm
 
-## **Python Redis ORM library that gives redis easy-to-use objects with fields and speeds a developmet up, inspired by Django ORM**
+## **Python Redis ORM library that gives redis easy-to-use objects with fields and speeds a development up, inspired by Django ORM**
 
 For one project, I needed to work with redis, but redis-py provides a minimum level of work with redis. I didn't find any Django-like ORM for redis, so I wrote this library, then there will be a port to Django.
 
@@ -13,32 +13,55 @@ For one project, I needed to work with redis, but redis-py provides a minimum le
 - Built-in RedisRoot class that stores specified models, with:
     - **redis_instance** setting - your redis connection (from redis-py)
     - **prefix** setting - prefix of this RedisRoot to be stored in redis
-    - **ignore_deserialization_errors** setting - do not raise errors, while deserealizing data
+    - **ignore_deserialization_errors** setting - do not raise errors, while deserializing data
     - **save_consistency** setting - show structure-first data
     - **economy** setting - to not return full data and save some requests (usually, speeds up your app on 80%)
-- 9 built-in types of fields:
+- 13 built-in types of fields:
     - **RedisField** - base class for nesting
     - **RedisString** - string
     - **RedisNumber** - int or float
     - **RedisId** - instances IDs
-    - **RedisDateTime** - for work with date and time, via python datetime
-    - **RedisForeignKey** - for links to other redis models
+    - **RedisBool** - bool
+    - **RedisDecimal** - working accurately with numbers via decimal
     - **RedisJson** - for data, that can be JSONed
     - **RedisList** - list
     - **RedisDict** - dict
+    - **RedisDateTime** - for work with date and time, via python datetime.datetime
+    - **RedisDate** - for work with date, via python datetime.data
+    - **RedisForeignKey** - for link to other instance
+    - **RedisManyToMany** - for links to other instances
+
 - All fields supports:
     - Automatically serialization
     - Automatically deserialization
     - TTL (Time To Live) setting
     - Default values
-    - Providing functions to default values
+    - Providing functions without call, to call, while need
     - Allow null values setting
     - Choices
+    - Filtering (and deep filtering):
+        - **exact** - equality
+        - **iexact** - case-independent equality
+        - **contains** - is filter string in the value string
+        - **icontains** - is filter string case-independent in the value string
+        - **in** - is value in the provided list
+        - **gt** - is value greater
+        - **gte** - is value greater or equals
+        - **lt** - is value less
+        - **lte** - is value less or equals
+        - **startswith** - is string starts with
+        - **istartswith** - is string case-independent starts with
+        - **endswith** - is string ends with
+        - **iendswith** - is string case-independent ends wth
+        - **range** - is value in provided range
+        - **isnull** - is value in ["null", None]
 - Built-in RedisModel class, with:
     - All fields that you want
-    - TTL (Time To Live), applies if no ttl on field
+    - TTL (Time To Live)
 - CRUD (Create Read Update Delete), in our variation: save, get, filter, order, update, delete:
     - `example_instance = ExampleModel(example_field='example_data').save()` - to create an instance and get its data dict
+    - or:
+    - `example_instance = redis_root.create(ExampleModel, example_field='example_data')`
     - `filtered_example_instances = redis_root.get(ExampleModel, example_field='example_data')` - to get all ExampleModel instances with example_field filter and get its data dict
     - `ordered_instances = redis_root.order(filtered_example_instances, '-id')` - to get ordered filtered_example_instances by id ('-' for reverse)
     - `updated_example_instances = redis_root.update(ExampleModel, ordered_instances, example_field='another_example_data')` - to update all ordered_instances example_field with value 'another_example_data' and get its data dict
@@ -55,16 +78,28 @@ Obviously, you need to install and run redis server on your machine, we support 
 
 # Usage
 
+1. Create **RedisRoot** with params:
+    - **prefix** (str) - prefix for your redis root
+    - **connection_pool** (redis.ConnectionPool) - redis-py redis.ConnectionPool instance, with decode_responses=True
+    - **ignore_deserialization_errors** (bool) - to ignore deserialization errors or raise exception
+    - **save_consistency** (bool) - to use structure-first data
+    - **economy** (bool) - if True, all update requests will return only instance id 
+    - **use_keys** (bool) - to use Redis keys command (uses memory instead of CPU) instead of scan
+2. Create your models
+3. Call **register_models()** on your RedisRoot instance and provide list with your models
+4. Use our CRUD
+
+
+# Example usage
+
 All features:
 
 [full_test.py](https://github.com/gh0st-work/python_redis_orm/blob/master/python_redis_orm/tests/full_test.py)
 ```python
-import datetime
 import random
 from time import sleep
-
-
-from python_redis_orm.core import *
+import asyncio
+# from python_redis_orm.core import *
 
 
 def generate_token(chars_count):
@@ -99,12 +134,12 @@ class TaskChallenge(RedisModel):
 
 
 class TtlCheckModel(RedisModel):
-    redis_number_with_ttl = RedisNumber(default=0, null=False, ttl=5)
+    redis_number_with_ttl = RedisNumber(default=0, null=False)
 
 
 class MetaTtlCheckModel(RedisModel):
     redis_number = RedisNumber(default=0, null=False)
-
+    
     class Meta:
         ttl = 5
 
@@ -117,33 +152,17 @@ class ListCheckModel(RedisModel):
     redis_list = RedisList()
 
 
-# class DjangoForeignKeyModel(RedisModel):
-#     foreign_key = RedisDjangoForeignKey(model=Proxy)
-
-
-def get_redis_instance(connection_pool=None):
-    REDIS_HOST = 'localhost'
-    REDIS_PORT = 6379
-    redis_instance = redis.Redis(
-        decode_responses=True,
-        host=REDIS_HOST,
-        port=REDIS_PORT,
-        db=0,
-        connection_pool=connection_pool
-    )
-    return redis_instance
-
-
-def clean_db_after_test(redis_instance, prefix):
-    for key in redis_instance.scan_iter(f'{prefix}:*'):
+def clean_db_after_test(connection_pool, prefix):
+    redis_instance = redis.Redis(connection_pool=connection_pool)
+    for key in redis_instance.keys(f'{prefix}:*'):
         redis_instance.delete(key)
 
 
-def basic_test(redis_instance, prefix):
+def basic_test(connection_pool, prefix):
     try:
         redis_root = RedisRoot(
             prefix=prefix,
-            redis_instance=redis_instance,
+            connection_pool=connection_pool,
             ignore_deserialization_errors=True
         )
         redis_root.register_models([
@@ -169,14 +188,14 @@ def basic_test(redis_instance, prefix):
                     have_exception = True
     except BaseException as ex:
         have_exception = True
-    clean_db_after_test(redis_instance, prefix)
+    clean_db_after_test(connection_pool, prefix)
     return have_exception
 
 
-def auto_reg_test(redis_instance, prefix):
+def auto_reg_test(connection_pool, prefix):
     redis_root = RedisRoot(
         prefix=prefix,
-        redis_instance=redis_instance,
+        connection_pool=connection_pool,
         ignore_deserialization_errors=True
     )
     task_challenge_1 = TaskChallenge(
@@ -188,11 +207,11 @@ def auto_reg_test(redis_instance, prefix):
         have_exception = False
     except BaseException as ex:
         have_exception = True
-    clean_db_after_test(redis_instance, prefix)
+    clean_db_after_test(connection_pool, prefix)
     return have_exception
 
 
-def no_redis_instance_test(*args, **kwargs):
+def no_connection_pool_test(*args, **kwargs):
     try:
         redis_root = RedisRoot(
             ignore_deserialization_errors=True
@@ -204,16 +223,22 @@ def no_redis_instance_test(*args, **kwargs):
         task_challenge_1.save()
         task_challenges = redis_root.get(TaskChallenge)
         have_exception = False
-        clean_db_after_test(redis_root.redis_instance, redis_root.prefix)
+        connection_pool = redis.ConnectionPool(
+            host='localhost',
+            port=6379,
+            db=0,
+            decode_responses=True
+        )
+        clean_db_after_test(connection_pool, redis_root.prefix)
     except BaseException as ex:
         have_exception = True
     return have_exception
 
 
-def choices_test(redis_instance, prefix):
+def choices_test(connection_pool, prefix):
     redis_root = RedisRoot(
         prefix=prefix,
-        redis_instance=redis_instance,
+        connection_pool=connection_pool,
         ignore_deserialization_errors=True
     )
     task_challenge_1 = TaskChallenge(
@@ -226,14 +251,14 @@ def choices_test(redis_instance, prefix):
         have_exception = True
     except BaseException as ex:
         have_exception = False
-    clean_db_after_test(redis_instance, prefix)
+    clean_db_after_test(connection_pool, prefix)
     return have_exception
 
 
-def order_test(redis_instance, prefix):
+def order_test(connection_pool, prefix):
     redis_root = RedisRoot(
         prefix=prefix,
-        redis_instance=redis_instance,
+        connection_pool=connection_pool,
         ignore_deserialization_errors=True
     )
     for i in range(3):
@@ -249,14 +274,14 @@ def order_test(redis_instance, prefix):
             have_exception = False
     except BaseException as ex:
         pass
-    clean_db_after_test(redis_instance, prefix)
+    clean_db_after_test(connection_pool, prefix)
     return have_exception
 
 
-def filter_test(redis_instance, prefix):
+def filter_test(connection_pool, prefix):
     redis_root = RedisRoot(
         prefix=prefix,
-        redis_instance=redis_instance,
+        connection_pool=connection_pool,
         ignore_deserialization_errors=True
     )
     have_exception = True
@@ -274,15 +299,15 @@ def filter_test(redis_instance, prefix):
             have_exception = False
     except BaseException as ex:
         print(ex)
-
-    clean_db_after_test(redis_instance, prefix)
+    
+    clean_db_after_test(connection_pool, prefix)
     return have_exception
 
 
-def update_test(redis_instance, prefix):
+def update_test(connection_pool, prefix):
     redis_root = RedisRoot(
         prefix=prefix,
-        redis_instance=redis_instance,
+        connection_pool=connection_pool,
         ignore_deserialization_errors=True
     )
     have_exception = True
@@ -298,15 +323,15 @@ def update_test(redis_instance, prefix):
                     have_exception = False
     except BaseException as ex:
         print(ex)
-
-    clean_db_after_test(redis_instance, prefix)
+    
+    clean_db_after_test(connection_pool, prefix)
     return have_exception
 
 
-def functions_like_defaults_test(redis_instance, prefix):
+def functions_like_defaults_test(connection_pool, prefix):
     redis_root = RedisRoot(
         prefix=prefix,
-        redis_instance=redis_instance,
+        connection_pool=connection_pool,
         ignore_deserialization_errors=True
     )
     have_exception = False
@@ -317,15 +342,15 @@ def functions_like_defaults_test(redis_instance, prefix):
             have_exception = True
     except BaseException as ex:
         pass
-
-    clean_db_after_test(redis_instance, prefix)
+    
+    clean_db_after_test(connection_pool, prefix)
     return have_exception
 
 
-def redis_foreign_key_test(redis_instance, prefix):
+def redis_foreign_key_test(connection_pool, prefix):
     redis_root = RedisRoot(
         prefix=prefix,
-        redis_instance=redis_instance,
+        connection_pool=connection_pool,
         ignore_deserialization_errors=True
     )
     have_exception = True
@@ -346,38 +371,15 @@ def redis_foreign_key_test(redis_instance, prefix):
                 have_exception = False
     except BaseException as ex:
         print(ex)
-
-    clean_db_after_test(redis_instance, prefix)
+    
+    clean_db_after_test(connection_pool, prefix)
     return have_exception
 
 
-# def django_foreign_key_test(redis_instance, prefix):
-#     redis_root = RedisRoot(
-#         prefix=prefix,
-#         redis_instance=redis_instance,
-#         ignore_deserialization_errors=True
-#     )
-#     have_exception = True
-#     try:
-#         proxy = Proxy.objects.all()[0]
-#         django_foreign_key_model = DjangoForeignKeyModel(
-#             redis_root=redis_root,
-#             foreign_key=proxy,
-#         ).save()
-#         django_foreign_key_models = redis_root.get(DjangoForeignKeyModel)
-#         django_foreign_key_model = redis_root.order(django_foreign_key_models, '-id')[0]
-#         if django_foreign_key_model['foreign_key'] == proxy:
-#             have_exception = False
-#     except BaseException as ex:
-#         print(ex)
-#     clean_db_after_test(redis_instance, prefix)
-#     return have_exception
-
-
-def delete_test(redis_instance, prefix):
+def delete_test(connection_pool, prefix):
     redis_root = RedisRoot(
         prefix=prefix,
-        redis_instance=redis_instance,
+        connection_pool=connection_pool,
         ignore_deserialization_errors=True
     )
     have_exception = True
@@ -397,43 +399,15 @@ def delete_test(redis_instance, prefix):
             have_exception = False
     except BaseException as ex:
         print(ex)
-
-    clean_db_after_test(redis_instance, prefix)
+    
+    clean_db_after_test(connection_pool, prefix)
     return have_exception
 
 
-def ttl_test(redis_instance, prefix):
+def save_consistency_test(connection_pool, prefix):
     redis_root = RedisRoot(
         prefix=prefix,
-        redis_instance=redis_instance,
-        ignore_deserialization_errors=True
-    )
-    have_exception = True
-    try:
-        ttl_check_model_1 = TtlCheckModel(
-            redis_root=redis_root,
-        ).save()
-        ttl_check_models = redis_root.get(TtlCheckModel)
-        if len(ttl_check_models):
-            ttl_check_model = ttl_check_models[0]
-            if 'redis_number_with_ttl' in ttl_check_model.keys():
-                sleep(6)
-                ttl_check_models = redis_root.get(TtlCheckModel)
-                if len(ttl_check_models):
-                    ttl_check_model = ttl_check_models[0]
-                    if 'redis_number_with_ttl' not in ttl_check_model.keys():
-                        have_exception = False
-    except BaseException as ex:
-        print(ex)
-
-    clean_db_after_test(redis_instance, prefix)
-    return have_exception
-
-
-def save_consistency_test(redis_instance, prefix):
-    redis_root = RedisRoot(
-        prefix=prefix,
-        redis_instance=redis_instance,
+        connection_pool=connection_pool,
         ignore_deserialization_errors=True,
         save_consistency=True,
     )
@@ -454,15 +428,15 @@ def save_consistency_test(redis_instance, prefix):
                         have_exception = False
     except BaseException as ex:
         print(ex)
-
-    clean_db_after_test(redis_instance, prefix)
+    
+    clean_db_after_test(connection_pool, prefix)
     return have_exception
 
 
-def meta_ttl_test(redis_instance, prefix):
+def meta_ttl_test(connection_pool, prefix):
     redis_root = RedisRoot(
         prefix=prefix,
-        redis_instance=redis_instance,
+        connection_pool=connection_pool,
         ignore_deserialization_errors=True,
     )
     have_exception = True
@@ -480,23 +454,24 @@ def meta_ttl_test(redis_instance, prefix):
                     have_exception = False
     except BaseException as ex:
         print(ex)
-
-    clean_db_after_test(redis_instance, prefix)
+    
+    clean_db_after_test(connection_pool, prefix)
     return have_exception
 
 
-def economy_test(redis_instance, prefix):
+def economy_test(connection_pool, prefix):
     have_exception = True
     try:
-
+        
         redis_root = RedisRoot(
             prefix=prefix,
-            redis_instance=redis_instance,
+            connection_pool=connection_pool,
             ignore_deserialization_errors=True,
             economy=True
         )
         started_in_economy = datetime.datetime.now()
-        for i in range(10):
+        tests_count = 100
+        for i in range(tests_count):
             task_challenge_1 = TaskChallenge(
                 redis_root=redis_root,
                 status='in_work',
@@ -504,16 +479,16 @@ def economy_test(redis_instance, prefix):
             redis_root.update(TaskChallenge, task_challenge_1, account_checks_count=1)
         ended_in_economy = datetime.datetime.now()
         economy_time = (ended_in_economy - started_in_economy).total_seconds()
-        clean_db_after_test(redis_instance, prefix)
-
+        clean_db_after_test(connection_pool, prefix)
+        
         redis_root = RedisRoot(
             prefix=prefix,
-            redis_instance=redis_instance,
+            connection_pool=connection_pool,
             ignore_deserialization_errors=True,
             economy=False
         )
         started_in_no_economy = datetime.datetime.now()
-        for i in range(10):
+        for i in range(tests_count):
             task_challenge_1 = TaskChallenge(
                 redis_root=redis_root,
                 status='in_work',
@@ -521,7 +496,7 @@ def economy_test(redis_instance, prefix):
             redis_root.update(TaskChallenge, task_challenge_1, account_checks_count=1)
         ended_in_no_economy = datetime.datetime.now()
         no_economy_time = (ended_in_no_economy - started_in_no_economy).total_seconds()
-        clean_db_after_test(redis_instance, prefix)
+        clean_db_after_test(connection_pool, prefix)
         economy_percent = round((no_economy_time / economy_time - 1) * 100, 2)
         economy_symbol = ('+' if economy_percent > 0 else '')
         print(f'Economy gives {economy_symbol}{economy_percent}% efficiency')
@@ -529,15 +504,64 @@ def economy_test(redis_instance, prefix):
             have_exception = False
     except BaseException as ex:
         print(ex)
-
-    clean_db_after_test(redis_instance, prefix)
+    
+    clean_db_after_test(connection_pool, prefix)
     return have_exception
 
 
-def dict_test(redis_instance, prefix):
+def use_keys_test(connection_pool, prefix):
+    have_exception = True
+    try:
+        
+        redis_root = RedisRoot(
+            prefix=prefix,
+            connection_pool=connection_pool,
+            ignore_deserialization_errors=True,
+            use_keys=True
+        )
+        started_in_keys = datetime.datetime.now()
+        tests_count = 100
+        for i in range(tests_count):
+            task_challenge_1 = TaskChallenge(
+                redis_root=redis_root,
+                status='in_work',
+            ).save()
+            redis_root.update(TaskChallenge, task_challenge_1, account_checks_count=1)
+        ended_in_keys = datetime.datetime.now()
+        keys_time = (ended_in_keys - started_in_keys).total_seconds()
+        clean_db_after_test(connection_pool, prefix)
+        
+        redis_root = RedisRoot(
+            prefix=prefix,
+            connection_pool=connection_pool,
+            ignore_deserialization_errors=True,
+            use_keys=False
+        )
+        started_in_no_keys = datetime.datetime.now()
+        for i in range(tests_count):
+            task_challenge_1 = TaskChallenge(
+                redis_root=redis_root,
+                status='in_work',
+            ).save()
+            redis_root.update(TaskChallenge, task_challenge_1, account_checks_count=1)
+        ended_in_no_keys = datetime.datetime.now()
+        no_keys_time = (ended_in_no_keys - started_in_no_keys).total_seconds()
+        clean_db_after_test(connection_pool, prefix)
+        keys_percent = round((no_keys_time / keys_time - 1) * 100, 2)
+        keys_symbol = ('+' if keys_percent > 0 else '')
+        print(f'Keys usage gives {keys_symbol}{keys_percent}% efficiency')
+        have_exception = False
+    except BaseException as ex:
+        print(ex)
+    
+    clean_db_after_test(connection_pool, prefix)
+    return have_exception
+
+
+def dict_test(connection_pool, prefix):
     redis_root = RedisRoot(
         prefix=prefix,
-        redis_instance=redis_instance,
+        connection_pool=connection_pool,
         ignore_deserialization_errors=True
     )
     have_exception = True
@@ -556,15 +580,15 @@ def dict_test(redis_instance, prefix):
                 have_exception = False
     except BaseException as ex:
         print(ex)
-
-    clean_db_after_test(redis_instance, prefix)
+    
+    clean_db_after_test(connection_pool, prefix)
     return have_exception
 
 
-def list_test(redis_instance, prefix):
+def list_test(connection_pool, prefix):
     redis_root = RedisRoot(
         prefix=prefix,
-        redis_instance=redis_instance,
+        connection_pool=connection_pool,
         ignore_deserialization_errors=True
     )
     have_exception = True
@@ -580,27 +604,26 @@ def list_test(redis_instance, prefix):
                 have_exception = False
     except BaseException as ex:
         print(ex)
-
-    clean_db_after_test(redis_instance, prefix)
+    
+    clean_db_after_test(connection_pool, prefix)
     return have_exception
 
 
-def async_test(redis_instance, prefix):
+def async_test(connection_pool, prefix):
     have_exception = True
     try:
-
+        
         async def async_task(data_count, use_async=True):
             redis_roots = []
             connection_pool = redis.ConnectionPool(host='localhost', port=6379, db=0, decode_responses=True)
             for i in range(data_count):
-                redis_instance = get_redis_instance(connection_pool)
                 redis_root = RedisRoot(
                     prefix=prefix,
-                    redis_instance=redis_instance,
+                    connection_pool=connection_pool,
                     ignore_deserialization_errors=True
                 )
                 redis_roots.append(redis_root)
-
+            
             async def create_list(redis_roots, redis_root_index, list_length):
                 some_list = [random.choice('ABCDEF') for i in range(list_length)]
                 redis_root = redis_roots[redis_root_index]
@@ -612,7 +635,7 @@ def async_test(redis_instance, prefix):
                     'list': some_list,
                     'id': list_check_model_instance['id']
                 }
-
+            
             async def get_object_existence(redis_roots, redis_root_index, lists_with_ids):
                 exists = False
                 redis_root = redis_roots[redis_root_index]
@@ -621,7 +644,7 @@ def async_test(redis_instance, prefix):
                     if len(objects) == 1:
                         exists = objects[0]['id'] == lists_with_ids['id']
                 return exists
-
+            
             async def update_list(redis_roots, redis_root_index, lists_with_ids):
                 result = False
                 redis_root = redis_roots[redis_root_index]
@@ -637,7 +660,7 @@ def async_test(redis_instance, prefix):
                             if len(updated_objects) == 1:
                                 result = updated_objects[0]['id'] == lists_with_ids['id']
                 return result
-
+            
             async def delete_list(redis_roots, redis_root_index, id):
                 result = False
                 redis_root = redis_roots[redis_root_index]
@@ -650,7 +673,7 @@ def async_test(redis_instance, prefix):
                         if not objects:
                             result = True
                 return result
-
+            
             async def create_lists(lists_count, use_async=True):
                 if use_async:
                     async_create_lists_tasks = [
@@ -664,7 +687,7 @@ def async_test(redis_instance, prefix):
                         for i in range(lists_count)
                     ]
                 return list_of_lists_with_ids
-
+            
             async def get_objects_existence(list_of_lists_with_ids, use_async=True):
                 if use_async:
                     async_get_object_by_list_tasks = [
@@ -678,7 +701,7 @@ def async_test(redis_instance, prefix):
                         for i, lists_with_ids in enumerate(list_of_lists_with_ids)
                     ]
                 return list_of_results
-
+            
             async def update_lists(list_of_lists_with_ids, use_async=True):
                 if use_async:
                     async_update_list_tasks = [
@@ -692,7 +715,7 @@ def async_test(redis_instance, prefix):
                         for i, lists_with_ids in enumerate(list_of_lists_with_ids)
                     ]
                 return list_of_results
-
+            
             async def delete_lists(list_of_lists_with_ids, use_async=True):
                 if use_async:
                     async_delete_list_tasks = [
@@ -706,9 +729,7 @@ def async_test(redis_instance, prefix):
                         for i, lists_with_ids in enumerate(list_of_lists_with_ids)
                     ]
                 return list_of_results
-
-
-
+            
             list_of_lists_with_ids = await create_lists(data_count, use_async)
             list_of_results = await get_objects_existence(list_of_lists_with_ids, use_async)
             if all(list_of_results):
@@ -716,7 +737,7 @@ def async_test(redis_instance, prefix):
                 if all(list_of_results):
                     list_of_results = await delete_lists(list_of_lists_with_ids, use_async)
             return all(list_of_results)
-
+        
         data_count = 10
         async_started_in = datetime.datetime.now()
         async_result = asyncio.run(async_task(data_count))
@@ -727,36 +748,40 @@ def async_test(redis_instance, prefix):
         sync_result = asyncio.run(async_task(data_count, False))
         sync_ended_in = datetime.datetime.now()
         sync_time = (sync_ended_in - sync_started_in).total_seconds()
-
+        
         async_percent = round((async_time / sync_time - 1) * 100, 2)
         async_symbol = ('+' if async_percent > 0 else '')
         print(f'Async gives {async_symbol}{async_percent}% efficiency')
-
+    
     except BaseException as ex:
         print(ex)
-
-    clean_db_after_test(redis_instance, prefix)
+    
+    clean_db_after_test(connection_pool, prefix)
     return have_exception
 
 
 def run_tests():
-    redis_instance = get_redis_instance()
+    connection_pool = redis.ConnectionPool(
+        host='localhost',
+        port=6379,
+        db=0,
+        decode_responses=True
+    )
     tests = [
         basic_test,
         auto_reg_test,
-        no_redis_instance_test,
+        no_connection_pool_test,
         choices_test,
         order_test,
         filter_test,
         functions_like_defaults_test,
         redis_foreign_key_test,
-        # django_foreign_key_test,
         update_test,
         delete_test,
-        ttl_test,
         save_consistency_test,
         meta_ttl_test,
         economy_test,
+        use_keys_test,
         list_test,
         dict_test,
         async_test,
@@ -767,7 +792,7 @@ def run_tests():
     for i, test in enumerate(tests):
         print(f'Starting {int(i + 1)} test: {test.__name__.replace("_", " ")}')
         test_started_in = datetime.datetime.now()
-        result = not test(redis_instance, test.__name__)
+        result = not test(connection_pool, test.__name__)
         test_ended_in = datetime.datetime.now()
         test_time = (test_ended_in - test_started_in).total_seconds()
         print(f'{result = } / {test_time}s\n')

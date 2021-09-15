@@ -1,17 +1,40 @@
 [tool.poetry]
 name = "python-redis-orm"
-version = "0.2.1"
-description = "Python Redis ORM library that gives redis easy-to-use objects with fields and speeds a developmet up, inspired by Django ORM"
+version = "0.2.8"
+description = "Python Redis ORM library that gives redis easy-to-use objects with fields and speeds a development up, inspired by Django ORM"
 authors = ["Anton Nechaev <antonnechaev990@gmail.com>"]
 readme = "README.md"
 repository = "https://github.com/gh0st-work/python_redis_orm"
 homepage = "https://github.com/gh0st-work/python_redis_orm"
 keywords = ["python", "redis", "ORM", "django", "database"]
 license = "MIT"
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "Environment :: Web Environment",
+    "Operating System :: OS Independent",
+    "Topic :: Database :: Front-Ends",
+    "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
+    "Topic :: Software Development",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Software Development :: Object Brokering",
+    "Topic :: Utilities",
+    "License :: OSI Approved :: MIT License",
+    "Framework :: Django",
+    "Framework :: Django :: 3.0",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.6",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+]
 
 [tool.poetry.dependencies]
 python = "^3.6"
 redis = "^3.5.3"
+pytz = "^2021"
 
 [tool.poetry.dev-dependencies]
 
