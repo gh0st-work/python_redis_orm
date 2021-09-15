@@ -1,6 +1,7 @@
 import random
 from time import sleep
 import asyncio
+import os
 
 
 from python_redis_orm.core import *
@@ -128,8 +129,8 @@ def no_connection_pool_test(*args, **kwargs):
         task_challenges = redis_root.get(TaskChallenge)
         have_exception = False
         connection_pool = redis.ConnectionPool(
-            host='localhost',
-            port=6379,
+            host=os.environ['REDIS_HOST'],
+            port=os.environ['REDIS_PORT'],
             db=0,
             decode_responses=True
         )
@@ -519,7 +520,12 @@ def async_test(connection_pool, prefix):
         
         async def async_task(data_count, use_async=True):
             redis_roots = []
-            connection_pool = redis.ConnectionPool(host='localhost', port=6379, db=0, decode_responses=True)
+            connection_pool = redis.ConnectionPool(
+                host=os.environ['REDIS_HOST'],
+                port=os.environ['REDIS_PORT'],
+                db=0,
+                decode_responses=True
+            )
             for i in range(data_count):
                 redis_root = RedisRoot(
                     prefix=prefix,
