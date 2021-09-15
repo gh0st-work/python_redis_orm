@@ -2,6 +2,8 @@
 
 ## **Python Redis ORM library that gives redis easy-to-use objects with fields and speeds a development up, inspired by Django ORM**
 
+[![Full test](https://github.com/gh0st-work/python_redis_orm/actions/workflows/python-app.yml/badge.svg?event=push)](https://github.com/gh0st-work/python_redis_orm/actions/workflows/python-app.yml)
+
 For one project, I needed to work with redis, but redis-py provides a minimum level of work with redis. I didn't find any Django-like ORM for redis, so I wrote this library, then there will be a port to Django.
 
 ### Working with this library, you are expected:
