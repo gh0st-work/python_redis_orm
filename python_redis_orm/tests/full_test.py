@@ -699,14 +699,17 @@ def foreign_key_test(connection_pool, prefix):
         task_challenge_qs = redis_root.get(TaskChallenge, task_id=task_id)
         if len(task_challenge_qs) != 1:
             have_exception = True
+            print(len(task_challenge_qs))
         else:
             task_challenge = task_challenge_qs[0]
             foreign_key_check_instance_qs = redis_root.get(ForeignKeyCheckModel, task_challenge=task_challenge)
             if len(foreign_key_check_instance_qs) != 1:
                 have_exception = True
+                print(foreign_key_check_instance_qs)
             else:
                 foreign_key_check_instance = foreign_key_check_instance_qs[0]
                 if foreign_key_check_instance['task_challenge']['task_id'] != task_id:
+                    print(foreign_key_check_instance['task_challenge']['task_id'], task_id)
                     have_exception = True
     except BaseException as ex:
         print(ex)
@@ -723,7 +726,7 @@ def many_to_many_test(connection_pool, prefix):
     )
     have_exception = True
     try:
-        tasks_id = set([random.randrange(0, 100) for i in range(10)])
+        tasks_ids = set([random.randrange(0, 100) for i in range(10)])
         task_challenges = [
             TaskChallenge(
                 redis_root=redis_root,
@@ -776,6 +779,7 @@ def run_tests():
         dict_test,
         async_test,
         foreign_key_test,
+        many_to_many_test,
     ]
     results = []
     started_in = datetime.datetime.now()
