@@ -684,7 +684,7 @@ def foreign_key_test(connection_pool, prefix):
         connection_pool=connection_pool,
         ignore_deserialization_errors=True,
     )
-    have_exception = True
+    have_exception = False
     try:
         task_id = 12345
         task_challenge = TaskChallenge(
@@ -699,20 +699,18 @@ def foreign_key_test(connection_pool, prefix):
         task_challenge_qs = redis_root.get(TaskChallenge, task_id=task_id)
         if len(task_challenge_qs) != 1:
             have_exception = True
-            print(len(task_challenge_qs))
         else:
             task_challenge = task_challenge_qs[0]
             foreign_key_check_instance_qs = redis_root.get(ForeignKeyCheckModel, task_challenge=task_challenge)
             if len(foreign_key_check_instance_qs) != 1:
                 have_exception = True
-                print(foreign_key_check_instance_qs)
             else:
                 foreign_key_check_instance = foreign_key_check_instance_qs[0]
                 if foreign_key_check_instance['task_challenge']['task_id'] != task_id:
-                    print(foreign_key_check_instance['task_challenge']['task_id'], task_id)
                     have_exception = True
     except BaseException as ex:
         print(ex)
+        have_exception = True
     
     clean_db_after_test(connection_pool, prefix)
     return have_exception
@@ -724,7 +722,7 @@ def many_to_many_test(connection_pool, prefix):
         connection_pool=connection_pool,
         ignore_deserialization_errors=True,
     )
-    have_exception = True
+    have_exception = False
     try:
         tasks_ids = set([random.randrange(0, 100) for i in range(10)])
         task_challenges = [
@@ -748,6 +746,7 @@ def many_to_many_test(connection_pool, prefix):
                 have_exception = True
     except BaseException as ex:
         print(ex)
+        have_exception = True
     
     clean_db_after_test(connection_pool, prefix)
     return have_exception
