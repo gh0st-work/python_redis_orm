@@ -56,6 +56,13 @@ class DictCheckModel(RedisModel):
 
 class ListCheckModel(RedisModel):
     redis_list = RedisList()
+    
+
+class ForeignKeyCheckModel(RedisModel):
+    task_challenge = RedisForeignKey(model=TaskChallenge)
+
+class ManyToManyCheckModel(RedisModel):
+    task_challenges = RedisManyToMany(model=TaskChallenge)
 
 
 def clean_db_after_test(connection_pool, prefix):
@@ -671,6 +678,78 @@ def async_test(connection_pool, prefix):
     return have_exception
 
 
+def foreign_key_test(connection_pool, prefix):
+    redis_root = RedisRoot(
+        prefix=prefix,
+        connection_pool=connection_pool,
+        ignore_deserialization_errors=True,
+    )
+    have_exception = True
+    try:
+        task_id = 12345
+        task_challenge = TaskChallenge(
+            redis_root=redis_root,
+            task_id=task_id
+        ).save()
+        foreign_key_check_instance = redis_root.create(
+            ForeignKeyCheckModel,
+            task_challenge=task_challenge
+        )
+        # Check really created
+        task_challenge_qs = redis_root.get(TaskChallenge, task_id=task_id)
+        if len(task_challenge_qs) != 1:
+            have_exception = True
+        else:
+            task_challenge = task_challenge_qs[0]
+            foreign_key_check_instance_qs = redis_root.get(ForeignKeyCheckModel, task_challenge=task_challenge)
+            if len(foreign_key_check_instance_qs) != 1:
+                have_exception = True
+            else:
+                foreign_key_check_instance = foreign_key_check_instance_qs[0]
+                if foreign_key_check_instance['task_challenge']['task_id'] != task_id:
+                    have_exception = True
+    except BaseException as ex:
+        print(ex)
+    
+    clean_db_after_test(connection_pool, prefix)
+    return have_exception
+
+
+def many_to_many_test(connection_pool, prefix):
+    redis_root = RedisRoot(
+        prefix=prefix,
+        connection_pool=connection_pool,
+        ignore_deserialization_errors=True,
+    )
+    have_exception = True
+    try:
+        tasks_id = set([random.randrange(0, 100) for i in range(10)])
+        task_challenges = [
+            TaskChallenge(
+                redis_root=redis_root,
+                task_id=task_id
+            ).save()
+            for task_id in tasks_ids
+        ]
+        many_to_many_check_instance = redis_root.create(
+            ManyToManyCheckModel,
+            task_challenges=task_challenges
+        )
+        # Check really created
+        many_to_many_check_instances_qs = redis_root.get(ManyToManyCheckModel)
+        if len(many_to_many_check_instances_qs) != 1:
+            have_exception = True
+        else:
+            many_to_many_check_instance = many_to_many_check_instances_qs[0]
+            if many_to_many_check_instance['task_challenges'] != task_challenges:
+                have_exception = True
+    except BaseException as ex:
+        print(ex)
+    
+    clean_db_after_test(connection_pool, prefix)
+    return have_exception
+
+
 def run_tests():
     connection_pool = redis.ConnectionPool(
         host=os.environ['REDIS_HOST'],
@@ -696,6 +775,7 @@ def run_tests():
         list_test,
         dict_test,
         async_test,
+        foreign_key_test,
     ]
     results = []
     started_in = datetime.datetime.now()
