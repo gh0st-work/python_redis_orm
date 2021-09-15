@@ -13,6 +13,21 @@ jobs:
   build:
 
     runs-on: ubuntu-latest
+    
+    services:
+      # Label used to access the service container
+      redis:
+        # Docker Hub image
+        image: redis
+        # Set health checks to wait until redis has started
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          # Maps port 6379 on service container to the host
+          - 6379:6379
 
     steps:
     - uses: actions/checkout@v2
@@ -37,6 +52,6 @@ jobs:
         python python_redis_orm/tests/full_test.py
       env:
           # The hostname used to communicate with the Redis service container
-          REDIS_HOST: redis
+          REDIS_HOST: localhost
           # The default Redis port
           REDIS_PORT: 6379
