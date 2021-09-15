@@ -672,8 +672,8 @@ def async_test(connection_pool, prefix):
 
 def run_tests():
     connection_pool = redis.ConnectionPool(
-        host='localhost',
-        port=6379,
+        host=os.environ['REDIS_HOST'],
+        port=os.environ['REDIS_PORT'],
         db=0,
         decode_responses=True
     )
