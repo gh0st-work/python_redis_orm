@@ -4,7 +4,6 @@ from time import sleep
 import asyncio
 import os
 
-
 from python_redis_orm.core import *
 
 
@@ -56,13 +55,28 @@ class DictCheckModel(RedisModel):
 
 class ListCheckModel(RedisModel):
     redis_list = RedisList()
-    
+
 
 class ForeignKeyCheckModel(RedisModel):
     task_challenge = RedisForeignKey(model=TaskChallenge)
 
+
 class ManyToManyCheckModel(RedisModel):
     task_challenges = RedisManyToMany(model=TaskChallenge)
+
+
+class ModelWithOverriddenSave(RedisModel):
+    multiplied_max_field = RedisNumber()
+    
+    def save(self):
+        redis_root = self.get('redis_root')  # get value of any field
+        new_value = 1
+        all_instances = redis_root.get(ModelWithOverriddenSave)
+        if all_instances:
+            max_value = max(list(map(lambda instance: instance['multiplied_max_field'], all_instances)))
+            new_value = max_value * 2
+        self.set(multiplied_max_field=new_value)
+        return super().save()
 
 
 def clean_db_after_test(connection_pool, prefix):
@@ -752,6 +766,26 @@ def many_to_many_test(connection_pool, prefix):
     return have_exception
 
 
+def save_override_test(connection_pool, prefix):
+    redis_root = RedisRoot(
+        prefix=prefix,
+        connection_pool=connection_pool,
+        ignore_deserialization_errors=True,
+    )
+    have_exception = False
+    try:
+        instance_1 = redis_root.create(ModelWithOverriddenSave)
+        instance_2 = redis_root.create(ModelWithOverriddenSave)
+        if instance_1['multiplied_max_field'] * 2 != instance_2['multiplied_max_field']:
+            have_exception = True
+    except BaseException as ex:
+        print(ex)
+        have_exception = True
+    
+    clean_db_after_test(connection_pool, prefix)
+    return have_exception
+
+
 def run_tests():
     connection_pool = redis.ConnectionPool(
         host=os.environ['REDIS_HOST'],
@@ -779,6 +813,7 @@ def run_tests():
         async_test,
         foreign_key_test,
         many_to_many_test,
+        save_override_test,
     ]
     results = []
     started_in = datetime.datetime.now()
