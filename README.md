@@ -99,9 +99,12 @@ All features:
 [full_test.py](https://github.com/gh0st-work/python_redis_orm/blob/master/python_redis_orm/tests/full_test.py)
 ```python
 import random
+import sys
 from time import sleep
 import asyncio
-# from python_redis_orm.core import *
+import os
+
+from python_redis_orm.core import *
 
 
 def generate_token(chars_count):
@@ -152,6 +155,28 @@ class DictCheckModel(RedisModel):
 
 class ListCheckModel(RedisModel):
     redis_list = RedisList()
+
+
+class ForeignKeyCheckModel(RedisModel):
+    task_challenge = RedisForeignKey(model=TaskChallenge)
+
+
+class ManyToManyCheckModel(RedisModel):
+    task_challenges = RedisManyToMany(model=TaskChallenge)
+
+
+class ModelWithOverriddenSave(RedisModel):
+    multiplied_max_field = RedisNumber()
+    
+    def save(self):
+        redis_root = self.get('redis_root')  # get value of any field
+        new_value = 1
+        all_instances = redis_root.get(ModelWithOverriddenSave)
+        if all_instances:
+            max_value = max(list(map(lambda instance: instance['multiplied_max_field'], all_instances)))
+            new_value = max_value * 2
+        self.set(multiplied_max_field=new_value)
+        return super().save()
 
 
 def clean_db_after_test(connection_pool, prefix):
@@ -226,8 +251,8 @@ def no_connection_pool_test(*args, **kwargs):
         task_challenges = redis_root.get(TaskChallenge)
         have_exception = False
         connection_pool = redis.ConnectionPool(
-            host='localhost',
-            port=6379,
+            host=os.environ['REDIS_HOST'],
+            port=os.environ['REDIS_PORT'],
             db=0,
             decode_responses=True
         )
@@ -617,7 +642,12 @@ def async_test(connection_pool, prefix):
         
         async def async_task(data_count, use_async=True):
             redis_roots = []
-            connection_pool = redis.ConnectionPool(host='localhost', port=6379, db=0, decode_responses=True)
+            connection_pool = redis.ConnectionPool(
+                host=os.environ['REDIS_HOST'],
+                port=os.environ['REDIS_PORT'],
+                db=0,
+                decode_responses=True
+            )
             for i in range(data_count):
                 redis_root = RedisRoot(
                     prefix=prefix,
@@ -762,10 +792,209 @@ def async_test(connection_pool, prefix):
     return have_exception
 
 
+def foreign_key_test(connection_pool, prefix):
+    redis_root = RedisRoot(
+        prefix=prefix,
+        connection_pool=connection_pool,
+        ignore_deserialization_errors=True,
+    )
+    have_exception = False
+    try:
+        task_id = 12345
+        task_challenge = TaskChallenge(
+            redis_root=redis_root,
+            task_id=task_id
+        ).save()
+        foreign_key_check_instance = redis_root.create(
+            ForeignKeyCheckModel,
+            task_challenge=task_challenge
+        )
+        # Check really created
+        task_challenge_qs = redis_root.get(TaskChallenge, task_id=task_id)
+        if len(task_challenge_qs) != 1:
+            have_exception = True
+        else:
+            task_challenge = task_challenge_qs[0]
+            foreign_key_check_instance_qs = redis_root.get(ForeignKeyCheckModel, task_challenge=task_challenge)
+            if len(foreign_key_check_instance_qs) != 1:
+                have_exception = True
+            else:
+                foreign_key_check_instance = foreign_key_check_instance_qs[0]
+                if foreign_key_check_instance['task_challenge']['task_id'] != task_id:
+                    have_exception = True
+    except BaseException as ex:
+        print(ex)
+        have_exception = True
+    
+    clean_db_after_test(connection_pool, prefix)
+    return have_exception
+
+
+def many_to_many_test(connection_pool, prefix):
+    redis_root = RedisRoot(
+        prefix=prefix,
+        connection_pool=connection_pool,
+        ignore_deserialization_errors=True,
+    )
+    have_exception = False
+    try:
+        tasks_ids = set([random.randrange(0, 100) for i in range(10)])
+        task_challenges = [
+            TaskChallenge(
+                redis_root=redis_root,
+                task_id=task_id
+            ).save()
+            for task_id in tasks_ids
+        ]
+        many_to_many_check_instance = redis_root.create(
+            ManyToManyCheckModel,
+            task_challenges=task_challenges
+        )
+        # Check really created
+        many_to_many_check_instances_qs = redis_root.get(ManyToManyCheckModel)
+        if len(many_to_many_check_instances_qs) != 1:
+            have_exception = True
+        else:
+            many_to_many_check_instance = many_to_many_check_instances_qs[0]
+            if many_to_many_check_instance['task_challenges'] != task_challenges:
+                have_exception = True
+    except BaseException as ex:
+        print(ex)
+        have_exception = True
+    
+    clean_db_after_test(connection_pool, prefix)
+    return have_exception
+
+
+def save_override_test(connection_pool, prefix):
+    redis_root = RedisRoot(
+        prefix=prefix,
+        connection_pool=connection_pool,
+        ignore_deserialization_errors=True,
+    )
+    have_exception = False
+    try:
+        instance_1 = redis_root.create(ModelWithOverriddenSave)
+        instance_2 = redis_root.create(ModelWithOverriddenSave)
+        if instance_1['multiplied_max_field'] * 2 != instance_2['multiplied_max_field']:
+            have_exception = True
+    except BaseException as ex:
+        print(ex)
+        have_exception = True
+    
+    clean_db_after_test(connection_pool, prefix)
+    return have_exception
+
+
+def performance_test(connection_pool, prefix):
+    
+    have_exception = False
+    try:
+        
+        async def run_test(count, model):
+            
+            async def test(count, model, **test_params):
+                real_test_params = {
+                    'use_keys': True,
+                    'use_async': True
+                }
+                for key in real_test_params.copy():
+                    if key in test_params.keys():
+                        real_test_params[key] = test_params[key]
+        
+                async def create_instances(redis_root, count, use_async, model):
+            
+                    async def create_instance(redis_root, model):
+                        return redis_root.create(model)
+            
+                    if use_async:
+                        started_in = datetime.datetime.now()
+                        results = await asyncio.gather(*[
+                            create_instance(redis_root, model)
+                            for i in range(count)
+                        ])
+                        ended_in = datetime.datetime.now()
+                    else:
+                        started_in = datetime.datetime.now()
+                        results = [
+                            await create_instance(redis_root, model)
+                            for i in range(count)
+                        ]
+                        ended_in = datetime.datetime.now()
+            
+                    time_took = (ended_in - started_in).total_seconds()
+                    fields_count = len(results[0].keys()) * count
+                    clean_db_after_test(connection_pool, prefix)
+                    return [time_took, count, fields_count]
+        
+                redis_root = RedisRoot(
+                    prefix=prefix,
+                    connection_pool=connection_pool,
+                    ignore_deserialization_errors=True,
+                    use_keys=real_test_params['use_keys']
+                )
+        
+                test_result = await create_instances(redis_root, count, real_test_params['use_async'], model)
+        
+                return test_result
+    
+            test_confs = [
+                {
+                    'use_keys': False,
+                    'use_async': False,
+                },
+                {
+                    'use_keys': False,
+                    'use_async': True,
+                },
+                {
+                    'use_keys': True,
+                    'use_async': False,
+                },
+                {
+                    'use_keys': True,
+                    'use_async': True,
+                },
+    
+            ]
+    
+            test_confs_results = [
+                await test(count, model, **test_conf)
+                for test_conf in test_confs
+            ]
+            
+            print(f'\n\n\n'
+                  f'Performance test results on your machine:\n'
+                  f'Every test creates {test_confs_results[0][1]} instances of {model.__name__} model,\n'
+                  f'So every test creates {test_confs_results[0][2]} fields\n'
+                  f'Here is the results:\n'
+                  f'\n')
+            
+            min_time = min(list(map(lambda result: result[0], test_confs_results)))
+            min_conf_text = ''
+            for i, test_confs_result in enumerate(test_confs_results):
+                test_conf_text = ", ".join([f"{k} = {v}" for k, v in test_confs[i].items()])
+                print(f'Configuration: {test_conf_text} took {test_confs_result[0]}s')
+                if test_confs_result[0] == min_time:
+                    min_conf_text = test_conf_text
+            print(f'\n\n'
+                  f'Best configuration: {min_conf_text}\n')
+        
+        count = 1000
+        model = TaskChallenge
+        asyncio.run(run_test(1000, model))
+    except BaseException as ex:
+        print(ex)
+        have_exception = True
+    
+    clean_db_after_test(connection_pool, prefix)
+    return have_exception
+
+
 def run_tests():
     connection_pool = redis.ConnectionPool(
-        host='localhost',
-        port=6379,
+        host=os.environ['REDIS_HOST'],
+        port=os.environ['REDIS_PORT'],
         db=0,
         decode_responses=True
     )
@@ -787,6 +1016,10 @@ def run_tests():
         list_test,
         dict_test,
         async_test,
+        foreign_key_test,
+        many_to_many_test,
+        save_override_test,
+        performance_test,
     ]
     results = []
     started_in = datetime.datetime.now()
@@ -813,9 +1046,13 @@ def run_tests():
     print(f'\n'
           f'{results_success_count} / {len(results)} tests ran successfully\n'
           f'All tests completed in {time}s\n')
+    
+    return all(results)
 
 
 if __name__ == '__main__':
-    run_tests()
+    results = run_tests()
+    if not results:
+        sys.exit(1)
 
 ```
