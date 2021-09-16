@@ -910,13 +910,20 @@ class RedisModel:
                 raise Exception(f'{name} has no field {field_name}')
     
     def get(self, field_name):
-        name = self.__model_data__['name']
-        fields = self.__model_data__['fields']
-        meta = self.__model_data__['meta']
+        data = self.__model_data__
+        name = data['name']
+        fields = data['fields']
+        meta = data['meta']
+        redis_root = data['redis_root']
+        name = data['name']
         if field_name in fields.keys():
             field = fields[field_name]
             return field.value
         elif field_name in meta.keys():
             return meta[field_name]
+        elif field_name == 'redis_root':
+            return redis_root
+        elif field_name == 'name':
+            return name
         else:
             raise Exception(f'{name} has no field {field_name}')
