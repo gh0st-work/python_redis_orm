@@ -865,8 +865,8 @@ def performance_test(connection_pool, prefix):
             
             print(f'\n\n\n'
                   f'Performance test results on your machine:\n'
-                  f'Every test creates {test_confs_result[0][1]} instances of {model.__name__} model,\n'
-                  f'So every test creates {test_confs_result[0][2]} fields\n'
+                  f'Every test creates {test_confs_results[0][1]} instances of {model.__name__} model,\n'
+                  f'So every test creates {test_confs_results[0][2]} fields\n'
                   f'Here is the results:\n'
                   f'\n')
             
