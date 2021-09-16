@@ -2,7 +2,7 @@
 
 ## **Python Redis ORM library that gives redis easy-to-use objects with fields and speeds a development up, inspired by Django ORM**
 
-[![Full test](https://github.com/gh0st-work/python_redis_orm/actions/workflows/python-app.yml/badge.svg?event=push)](https://github.com/gh0st-work/python_redis_orm/actions/workflows/python-app.yml)
+[![Full test](https://github.com/gh0st-work/python_redis_orm/actions/workflows/python-app.yml/badge.svg?event=push)](https://github.com/gh0st-work/python_redis_orm/actions/workflows/python-app.yml) [![codecov](https://codecov.io/gh/gh0st-work/python_redis_orm/branch/master/graph/badge.svg?token=U71G4CYZBT)](https://codecov.io/gh/gh0st-work/python_redis_orm)
 
 For one project, I needed to work with redis, but redis-py provides a minimum level of work with redis. I didn't find any Django-like ORM for redis, so I wrote this library, then there will be a port to Django.
 
@@ -980,9 +980,9 @@ def performance_test(connection_pool, prefix):
             print(f'\n\n'
                   f'Best configuration: {min_conf_text}\n')
         
-        count = 1000
+        count = 100
         model = TaskChallenge
-        asyncio.run(run_test(1000, model))
+        asyncio.run(run_test(count, model))
     except BaseException as ex:
         print(ex)
         have_exception = True

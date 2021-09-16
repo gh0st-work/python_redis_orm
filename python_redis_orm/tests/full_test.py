@@ -880,9 +880,9 @@ def performance_test(connection_pool, prefix):
             print(f'\n\n'
                   f'Best configuration: {min_conf_text}\n')
         
-        count = 1000
+        count = 100
         model = TaskChallenge
-        asyncio.run(run_test(1000, model))
+        asyncio.run(run_test(count, model))
     except BaseException as ex:
         print(ex)
         have_exception = True
