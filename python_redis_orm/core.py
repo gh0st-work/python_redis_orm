@@ -2,6 +2,7 @@ import datetime
 import decimal
 import json
 from copy import deepcopy
+from inspect import isfunction
 
 import pytz
 import redis
@@ -505,7 +506,7 @@ class RedisRoot:
         fields = model.__dict__
         cleaned_fields = {}
         for field_name, field in fields.items():
-            if not callable(field):
+            if not isfunction(field):
                 cleaned_fields[field_name] = field
         if 'id' not in cleaned_fields.keys():
             cleaned_fields['id'] = RedisString(null=True)
@@ -513,16 +514,17 @@ class RedisRoot:
         for instance_id, instance_fields in instances_with_allowed.items():
             checked_instances[instance_id] = {}
             for field_name, field in fields.items():
-                if field_name in instance_fields.keys():
-                    checked_instances[instance_id][field_name] = instance_fields[field_name]
-                else:
-                    field.value = None
-                    cleaned_value = field.clean()
-                    allowed = self._filter_field_name(field_name, cleaned_value, filters)
-                    checked_instances[instance_id][field_name] = {
-                        'value': cleaned_value,
-                        'allowed': allowed
-                    }
+                if not isfunction(field):
+                    if field_name in instance_fields.keys():
+                        checked_instances[instance_id][field_name] = instance_fields[field_name]
+                    else:
+                        field.value = None
+                        cleaned_value = field.clean()
+                        allowed = self._filter_field_name(field_name, cleaned_value, filters)
+                        checked_instances[instance_id][field_name] = {
+                            'value': cleaned_value,
+                            'allowed': allowed
+                        }
         return checked_instances
     
     def _filter_value(self, value, filter_type, filter_by):
@@ -719,7 +721,7 @@ class RedisRoot:
     def _get_allowed_model_params(self, model, params):
         model_attrs = model.__dict__
         allowed_param_names = list(filter(
-            lambda param_name: param_name in model_attrs.keys() and not callable(model_attrs[param_name]),
+            lambda param_name: param_name in model_attrs.keys() and not isfunction(model_attrs[param_name]),
             params.keys()
         ))
         result_params = {param_name: params[param_name] for param_name in params.keys() if
@@ -825,7 +827,7 @@ class RedisModel:
         class_fields = self.__class__.__dict__.copy()
         fields = {}
         for field_name, field in class_fields.items():
-            if not callable(field):
+            if not isfunction(field):
                 if field_name == 'Meta':
                     self._set_meta(self.__class__.Meta.__dict__)
                 else:
@@ -852,7 +854,7 @@ class RedisModel:
         deserialized_fields = {}
         cleaned_fields = {}
         for field_name, field in fields.items():
-            if not callable(field):
+            if not isfunction(field):
                 try:
                     cleaned_value = field.clean()
                     cleaned_fields[field_name] = cleaned_value
