@@ -38,6 +38,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
+        pip install coverage
         pip install -U python-redis-orm
         pip install flake8 pytest
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
@@ -50,12 +51,15 @@ jobs:
     - name: Run full test
       run: |
         python python_redis_orm/tests/full_test.py
+        coverage run python_redis_orm/tests/full_test.py
       env:
           # The hostname used to communicate with the Redis service container
           REDIS_HOST: localhost
           # The default Redis port
           REDIS_PORT: 6379
-    - name: "Upload coverage to Codecov"
+    - name: "Upload coverage"
       uses: codecov/codecov-action@v2
       with:
         fail_ci_if_error: true
+      env:
+        CODECOV_TOKEN: 'a9c12b40-116f-4a66-852f-9efee808be26'
