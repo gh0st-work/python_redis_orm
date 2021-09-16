@@ -1,3 +1,6 @@
+from inspect import isfunction
+
+
 def check_types(value, allowed_types):
     if value:
         if not isinstance(value, allowed_types):
@@ -65,3 +68,7 @@ def check_callable(value):
     except:
         result_value = value
     return result_value
+
+
+def attr_is_real(attr_k, attr_v):
+    return not isfunction(attr_v) and not (attr_k.startswith('__') and attr_k.endswith('__'))

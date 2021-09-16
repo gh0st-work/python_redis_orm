@@ -7,7 +7,7 @@ from inspect import isfunction
 import pytz
 import redis
 
-from python_redis_orm.utils import check_types, get_ids_from_untyped_data, check_callable
+from python_redis_orm.utils import check_types, get_ids_from_untyped_data, check_callable, attr_is_real
 
 
 ### FIELDS ###
@@ -506,7 +506,7 @@ class RedisRoot:
         fields = model.__dict__
         cleaned_fields = {}
         for field_name, field in fields.items():
-            if not isfunction(field):
+            if attr_is_real(field_name, field):
                 cleaned_fields[field_name] = field
         if 'id' not in cleaned_fields.keys():
             cleaned_fields['id'] = RedisString(null=True)
@@ -514,7 +514,7 @@ class RedisRoot:
         for instance_id, instance_fields in instances_with_allowed.items():
             checked_instances[instance_id] = {}
             for field_name, field in fields.items():
-                if not isfunction(field):
+                if attr_is_real(field_name, field):
                     if field_name in instance_fields.keys():
                         checked_instances[instance_id][field_name] = instance_fields[field_name]
                     else:
@@ -720,13 +720,12 @@ class RedisRoot:
     
     def _get_allowed_model_params(self, model, params):
         model_attrs = model.__dict__
-        allowed_param_names = list(filter(
-            lambda param_name: param_name in model_attrs.keys() and not isfunction(model_attrs[param_name]),
-            params.keys()
-        ))
-        result_params = {param_name: params[param_name] for param_name in params.keys() if
-                         param_name in allowed_param_names}
-        return result_params
+        allowed_params = {}
+        for param_name in params.keys():
+            if param_name in model_attrs.keys():
+                if attr_is_real(param_name, model_attrs[param_name]):
+                    allowed_params[param_name] = params[param_name]
+        return allowed_params
     
     def update(self, model, instances=None, return_dict=False, renew_ttl=False, new_ttl=None,
                **fields_to_update):
@@ -827,7 +826,7 @@ class RedisModel:
         class_fields = self.__class__.__dict__.copy()
         fields = {}
         for field_name, field in class_fields.items():
-            if not isfunction(field):
+            if attr_is_real(field_name, field):
                 if field_name == 'Meta':
                     self._set_meta(self.__class__.Meta.__dict__)
                 else:
@@ -854,7 +853,7 @@ class RedisModel:
         deserialized_fields = {}
         cleaned_fields = {}
         for field_name, field in fields.items():
-            if not isfunction(field):
+            if attr_is_real(field_name, field):
                 try:
                     cleaned_value = field.clean()
                     cleaned_fields[field_name] = cleaned_value

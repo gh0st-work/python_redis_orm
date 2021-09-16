@@ -1,6 +1,5 @@
 import random
 import sys
-from itertools import permutations
 from time import sleep
 import asyncio
 import os
