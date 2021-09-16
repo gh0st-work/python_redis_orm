@@ -505,7 +505,7 @@ class RedisRoot:
         fields = model.__dict__
         cleaned_fields = {}
         for field_name, field in fields.items():
-            if not field_name.startswith('__'):
+            if not callable(field):
                 cleaned_fields[field_name] = field
         if 'id' not in cleaned_fields.keys():
             cleaned_fields['id'] = RedisString(null=True)
@@ -717,9 +717,9 @@ class RedisRoot:
         return updated_data
     
     def _get_allowed_model_params(self, model, params):
-        model_fields_names = model.__dict__.keys()
+        model_attrs = model.__dict__
         allowed_param_names = list(filter(
-            lambda param_name: param_name in model_fields_names and not param_name.startswith('__'),
+            lambda param_name: param_name in model_attrs.keys() and not callable(model_attrs[param_name]),
             params.keys()
         ))
         result_params = {param_name: params[param_name] for param_name in params.keys() if
@@ -825,7 +825,7 @@ class RedisModel:
         class_fields = self.__class__.__dict__.copy()
         fields = {}
         for field_name, field in class_fields.items():
-            if not field_name.startswith('__'):
+            if not callable(field):
                 if field_name == 'Meta':
                     self._set_meta(self.__class__.Meta.__dict__)
                 else:
@@ -852,7 +852,7 @@ class RedisModel:
         deserialized_fields = {}
         cleaned_fields = {}
         for field_name, field in fields.items():
-            if not field_name.startswith('__'):
+            if not callable(field):
                 try:
                     cleaned_value = field.clean()
                     cleaned_fields[field_name] = cleaned_value
