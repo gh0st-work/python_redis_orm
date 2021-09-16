@@ -1,5 +1,6 @@
 import random
 import sys
+from itertools import permutations
 from time import sleep
 import asyncio
 import os
@@ -786,6 +787,111 @@ def save_override_test(connection_pool, prefix):
     return have_exception
 
 
+def performance_test(connection_pool, prefix):
+    
+    have_exception = False
+    try:
+        
+        async def run_test(count, model):
+            
+            async def test(count, model, **test_params):
+                real_test_params = {
+                    'use_keys': True,
+                    'use_async': True
+                }
+                for key in real_test_params.copy():
+                    if key in test_params.keys():
+                        real_test_params[key] = test_params[key]
+        
+                async def create_instances(redis_root, count, use_async, model):
+            
+                    async def create_instance(redis_root, model):
+                        return redis_root.create(model)
+            
+                    if use_async:
+                        started_in = datetime.datetime.now()
+                        results = await asyncio.gather(*[
+                            create_instance(redis_root, model)
+                            for i in range(count)
+                        ])
+                        ended_in = datetime.datetime.now()
+                    else:
+                        started_in = datetime.datetime.now()
+                        results = [
+                            await create_instance(redis_root, model)
+                            for i in range(count)
+                        ]
+                        ended_in = datetime.datetime.now()
+            
+                    time_took = (ended_in - started_in).total_seconds()
+                    fields_count = len(results[0].keys()) * count
+                    clean_db_after_test(connection_pool, prefix)
+                    return [time_took, count, fields_count]
+        
+                redis_root = RedisRoot(
+                    prefix=prefix,
+                    connection_pool=connection_pool,
+                    ignore_deserialization_errors=True,
+                    use_keys=real_test_params['use_keys']
+                )
+        
+                test_result = await create_instances(redis_root, count, real_test_params['use_async'], model)
+        
+                return test_result
+    
+            test_confs = [
+                {
+                    'use_keys': False,
+                    'use_async': False,
+                },
+                {
+                    'use_keys': False,
+                    'use_async': True,
+                },
+                {
+                    'use_keys': True,
+                    'use_async': False,
+                },
+                {
+                    'use_keys': True,
+                    'use_async': True,
+                },
+    
+            ]
+    
+            test_confs_results = [
+                await test(count, model, **test_conf)
+                for test_conf in test_confs
+            ]
+            
+            print(f'\n\n\n'
+                  f'Performance test results on your machine:\n'
+                  f'Every test creates {test_confs_result[0][1]} instances of {model.__name__} model,\n'
+                  f'So every test creates {test_confs_result[0][2]} fields\n'
+                  f'Here is the results:\n'
+                  f'\n')
+            
+            min_time = min(list(map(lambda result: result[0], test_confs_results)))
+            min_conf_text = ''
+            for i, test_confs_result in enumerate(test_confs_results):
+                test_conf_text = ", ".join([f"{k} = {v}" for k, v in test_confs[i].items()])
+                print(f'Configuration: {test_conf_text} took {test_confs_result[0]}s')
+                if test_confs_result[0] == min_time:
+                    min_conf_text = test_conf_text
+            print(f'\n\n'
+                  f'Best configuration: {min_conf_text}\n')
+        
+        count = 1000
+        model = TaskChallenge
+        asyncio.run(run_test(1000, model))
+    except BaseException as ex:
+        print(ex)
+        have_exception = True
+    
+    clean_db_after_test(connection_pool, prefix)
+    return have_exception
+
+
 def run_tests():
     connection_pool = redis.ConnectionPool(
         host=os.environ['REDIS_HOST'],
@@ -814,6 +920,7 @@ def run_tests():
         foreign_key_test,
         many_to_many_test,
         save_override_test,
+        performance_test,
     ]
     results = []
     started_in = datetime.datetime.now()
