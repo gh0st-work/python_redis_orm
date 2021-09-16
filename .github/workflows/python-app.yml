@@ -52,6 +52,9 @@ jobs:
       run: |
         python python_redis_orm/tests/full_test.py
         coverage run python_redis_orm/tests/full_test.py
+        ls
+        cd ..
+        ls
       env:
           # The hostname used to communicate with the Redis service container
           REDIS_HOST: localhost
