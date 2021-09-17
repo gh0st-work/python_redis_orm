@@ -682,7 +682,7 @@ def non_blocking_test(connection_pool, prefix):
             for i in range(data_count):
                 test()
     
-    data_count = 1000
+    data_count = 100
     clean_db_after_test(connection_pool, prefix)
     nb_started_in = datetime.datetime.now()
     task(data_count, True)
@@ -972,84 +972,83 @@ if __name__ == '__main__':
 STARTING TESTS
 
 Starting 1 test: basic test
-result = True / 0.017128s
+result = True / 0.017655s
 
 Starting 2 test: auto reg test
-result = True / 0.00228s
+result = True / 0.002688s
 
 Starting 3 test: no connection pool test
-2021-09-17 12:42:32.542761 - RedisRoot: No connection_pool provided, trying default config...
-result = True / 0.003301s
+2021-09-17 13:33:42.915213 - RedisRoot: No connection_pool provided, trying default config...
+result = True / 0.003571s
 
 Starting 4 test: choices test
-result = True / 0.00103s
+result = True / 0.001307s
 
 Starting 5 test: order test
-result = True / 0.005032s
+result = True / 0.005999s
 
 Starting 6 test: filter test
-result = True / 0.016121s
+result = True / 0.019395s
 
 Starting 7 test: functions like defaults test
-result = True / 0.003091s
+result = True / 0.003462s
 
 Starting 8 test: redis foreign key test
-result = True / 0.005758s
+result = True / 0.006697s
 
 Starting 9 test: update test
-result = True / 0.003352s
+result = True / 0.003751s
 
 Starting 10 test: delete test
-result = True / 0.005884s
+result = True / 0.006936s
 
 Starting 11 test: save consistency test
-result = True / 6.009034s
+result = True / 6.009583s
 
 Starting 12 test: meta ttl test
-result = True / 6.010127s
+result = True / 6.010543s
 
 Starting 13 test: use keys test
-Keys usage gives +33.2% efficiency
-result = True / 1.097656s
+Keys usage gives +32.47% efficiency
+result = True / 1.348907s
 
 Starting 14 test: list test
-result = True / 0.002503s
+result = True / 0.002379s
 
 Starting 15 test: dict test
-result = True / 0.002373s
+result = True / 0.002316s
 
 Starting 16 test: non blocking test
-Non blocking gives +205.51% efficiency
-result = True / 11.074569s
+Non blocking gives +195.91% efficiency
+result = True / 13.0517s
 
 Starting 17 test: foreign key test
-result = True / 0.005522s
+result = True / 0.00598s
 
 Starting 18 test: many to many test
-result = True / 0.02759s
+result = True / 0.033524s
 
 Starting 19 test: save override test
-result = True / 0.003933s
+result = True / 0.003881s
 
 Starting 20 test: performance test
 
 
 
 Performance test results on your machine:
-Every test creates 1000 instances of TaskChallenge model,
-So every test creates 6000 fields
+Every test creates 1000 instances (6000 fields) of TaskChallenge model,
 Here is the results:
 
 
-Configuration: use_keys = False, use_non_blocking = False took 33.766182s
-Configuration: use_keys = False, use_non_blocking = True took 0.206961s
-Configuration: use_keys = True, use_non_blocking = False took 26.006067s
-Configuration: use_keys = True, use_non_blocking = True took 0.211069s
+Configuration: use_keys = False, use_non_blocking = False took 40.92255s
+Configuration: use_keys = False, use_non_blocking = True took 0.234719s
+Configuration: use_keys = True, use_non_blocking = False took 31.373307s
+Configuration: use_keys = True, use_non_blocking = True took 0.242484s
 
 
-Best configuration: use_keys = False, use_non_blocking = True
+The best configuration: use_keys = False, use_non_blocking = True
 
-result = True / 60.491986s
+result = True / 73.106303s
 
 
 SUCCESS!
@@ -1076,5 +1075,6 @@ Test 19/20: SUCCESS (save override test)
 Test 20/20: SUCCESS (performance test)
 
 20 / 20 tests ran successfully
-All tests completed in 84.788676s
+All tests completed in 99.646971s
+
 ```
