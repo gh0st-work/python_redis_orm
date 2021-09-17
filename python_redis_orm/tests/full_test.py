@@ -569,7 +569,7 @@ def non_blocking_test(connection_pool, prefix):
             for i in range(data_count):
                 test()
     
-    data_count = 100
+    data_count = 1000
     clean_db_after_test(connection_pool, prefix)
     nb_started_in = datetime.datetime.now()
     task(data_count, True)
@@ -762,8 +762,7 @@ def performance_test(connection_pool, prefix):
             
             print(f'\n\n\n'
                   f'Performance test results on your machine:\n'
-                  f'Every test creates {test_confs_results[0][1]} instances of {model.__name__} model,\n'
-                  f'So every test creates {test_confs_results[0][2]} fields\n'
+                  f'Every test creates {test_confs_results[0][1]} instances ({test_confs_results[0][2]} fields) of {model.__name__} model,\n'
                   f'Here is the results:\n'
                   f'\n')
             
@@ -775,7 +774,7 @@ def performance_test(connection_pool, prefix):
                 if test_confs_result[0] == min_time:
                     min_conf_text = test_conf_text
             print(f'\n\n'
-                  f'Best configuration: {min_conf_text}\n')
+                  f'The best configuration: {min_conf_text}\n')
         
         count = 1000
         model = TaskChallenge
