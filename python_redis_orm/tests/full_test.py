@@ -776,7 +776,7 @@ def performance_test(connection_pool, prefix):
             print(f'\n\n'
                   f'The best configuration: {min_conf_text}\n')
         
-        count = 100
+        count = 1000
         model = TaskChallenge
         run_test(count, model)
     except BaseException as ex:
