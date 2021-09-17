@@ -397,7 +397,7 @@ def use_keys_test(connection_pool, prefix):
             use_keys=True
         )
         started_in_keys = datetime.datetime.now()
-        tests_count = 1000
+        tests_count = 100
         for i in range(tests_count):
             task_challenge_1 = TaskChallenge(
                 redis_root=redis_root,
@@ -569,7 +569,7 @@ def non_blocking_test(connection_pool, prefix):
             for i in range(data_count):
                 test()
     
-    data_count = 1000
+    data_count = 100
     clean_db_after_test(connection_pool, prefix)
     nb_started_in = datetime.datetime.now()
     task(data_count, True)
@@ -776,7 +776,7 @@ def performance_test(connection_pool, prefix):
             print(f'\n\n'
                   f'The best configuration: {min_conf_text}\n')
         
-        count = 1000
+        count = 100
         model = TaskChallenge
         run_test(count, model)
     except BaseException as ex:
