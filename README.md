@@ -88,6 +88,29 @@ Obviously, you need to install and run redis server on your machine, we support 
 
 # CRUD
 ```python
+example_instance = ExampleModel(example_field='example_data').save() # - to create an instance and get its data dict
+# or:
+example_instance = redis_root.create(ExampleModel, example_field='example_data')
+filtered_example_instances = redis_root.get(ExampleModel, example_field='example_data') # - to get all ExampleModel instances with example_field filter and get its data dict
+ordered_instances = redis_root.order(filtered_example_instances, '-id') # - to get ordered filtered_example_instances by id ('-' for reverse)
+updated_example_instances = redis_root.update(ExampleModel, ordered_instances, example_field='another_example_data') # - to update all ordered_instances example_field with value 'another_example_data' and get its data dict
+redis_root.delete(ExampleModel, updated_example_instances) # - to delete updated_example_instances
+
+# Non-blocking funcs are the same, just add "_nb" to the end:
+# ExampleModel(...).save_nb()
+# redis_root.create_nb(...)
+# redis_root.update_nb(...)
+# redis_root.delete_nb(...)
+
+```
+
+
+# Example usage
+
+All features:
+
+[full_test.py](https://github.com/gh0st-work/python_redis_orm/blob/master/python_redis_orm/tests/full_test.py)
+```python
 import random
 import sys
 from time import sleep
@@ -578,8 +601,9 @@ def list_test(connection_pool, prefix):
 
 def non_blocking_test(connection_pool, prefix):
     have_exception = True
+    
     # try:
-        
+    
     def task(data_count, use_non_blocking):
         connection_pool = redis.ConnectionPool(
             host=os.environ['REDIS_HOST'],
@@ -602,7 +626,7 @@ def non_blocking_test(connection_pool, prefix):
                 ListCheckModel,
                 redis_list=['delete_list']
             )
-
+        
         def create_list():
             if use_non_blocking:
                 list_check_model_instance = redis_root.create_nb(
@@ -658,7 +682,6 @@ def non_blocking_test(connection_pool, prefix):
             for i in range(data_count):
                 test()
     
-    
     data_count = 100
     clean_db_after_test(connection_pool, prefix)
     nb_started_in = datetime.datetime.now()
@@ -671,7 +694,7 @@ def non_blocking_test(connection_pool, prefix):
     b_ended_in = datetime.datetime.now()
     b_time = (b_ended_in - b_started_in).total_seconds()
     clean_db_after_test(connection_pool, prefix)
-
+    
     nb_percent = round((nb_time / b_time - 1) * 100, 2)
     nb_symbol = ('+' if nb_percent > 0 else '')
     print(f'Non blocking gives {nb_symbol}{nb_percent}% efficiency')
@@ -941,4 +964,118 @@ if __name__ == '__main__':
     if not results:
         sys.exit(1)
 
+```
+
+
+### Output
+
+```
+STARTING TESTS
+
+Starting 1 test: basic test
+result = True / 0.017128s
+
+Starting 2 test: auto reg test
+result = True / 0.00228s
+
+Starting 3 test: no connection pool test
+2021-09-17 12:42:32.542761 - RedisRoot: No connection_pool provided, trying default config...
+result = True / 0.003301s
+
+Starting 4 test: choices test
+result = True / 0.00103s
+
+Starting 5 test: order test
+result = True / 0.005032s
+
+Starting 6 test: filter test
+result = True / 0.016121s
+
+Starting 7 test: functions like defaults test
+result = True / 0.003091s
+
+Starting 8 test: redis foreign key test
+result = True / 0.005758s
+
+Starting 9 test: update test
+result = True / 0.003352s
+
+Starting 10 test: delete test
+result = True / 0.005884s
+
+Starting 11 test: save consistency test
+result = True / 6.009034s
+
+Starting 12 test: meta ttl test
+result = True / 6.010127s
+
+Starting 13 test: use keys test
+Keys usage gives +33.2% efficiency
+result = True / 1.097656s
+
+Starting 14 test: list test
+result = True / 0.002503s
+
+Starting 15 test: dict test
+result = True / 0.002373s
+
+Starting 16 test: non blocking test
+Non blocking gives +205.51% efficiency
+result = True / 11.074569s
+
+Starting 17 test: foreign key test
+result = True / 0.005522s
+
+Starting 18 test: many to many test
+result = True / 0.02759s
+
+Starting 19 test: save override test
+result = True / 0.003933s
+
+Starting 20 test: performance test
+
+
+
+Performance test results on your machine:
+Every test creates 1000 instances of TaskChallenge model,
+So every test creates 6000 fields
+Here is the results:
+
+
+Configuration: use_keys = False, use_non_blocking = False took 33.766182s
+Configuration: use_keys = False, use_non_blocking = True took 0.206961s
+Configuration: use_keys = True, use_non_blocking = False took 26.006067s
+Configuration: use_keys = True, use_non_blocking = True took 0.211069s
+
+
+Best configuration: use_keys = False, use_non_blocking = True
+
+result = True / 60.491986s
+
+
+SUCCESS!
+
+Test 1/20: SUCCESS (basic test)
+Test 2/20: SUCCESS (auto reg test)
+Test 3/20: SUCCESS (no connection pool test)
+Test 4/20: SUCCESS (choices test)
+Test 5/20: SUCCESS (order test)
+Test 6/20: SUCCESS (filter test)
+Test 7/20: SUCCESS (functions like defaults test)
+Test 8/20: SUCCESS (redis foreign key test)
+Test 9/20: SUCCESS (update test)
+Test 10/20: SUCCESS (delete test)
+Test 11/20: SUCCESS (save consistency test)
+Test 12/20: SUCCESS (meta ttl test)
+Test 13/20: SUCCESS (use keys test)
+Test 14/20: SUCCESS (list test)
+Test 15/20: SUCCESS (dict test)
+Test 16/20: SUCCESS (non blocking test)
+Test 17/20: SUCCESS (foreign key test)
+Test 18/20: SUCCESS (many to many test)
+Test 19/20: SUCCESS (save override test)
+Test 20/20: SUCCESS (performance test)
+
+20 / 20 tests ran successfully
+All tests completed in 84.788676s
 ```
