@@ -456,6 +456,7 @@ class RedisRoot:
             new_id = self.creating[model][-1] + 1
         self.wait_creating = False
         return new_id
+
     
     def remove_creating(self, model, instance_id):
         self.wait_creation()
@@ -965,7 +966,7 @@ class RedisModel:
     def _get_and_reserve_new_id(self):
         redis_root = self.get('redis_root')
         self.id.value = redis_root.get_and_reserve_new_id(self.__class__)
-    
+
     def _set_fields(self, instance_key, fields_dict):
         model_ttl = self.get_model_ttl()
         redis_root = self.get('redis_root')
@@ -1027,3 +1028,4 @@ class RedisModel:
             return meta
         else:
             raise Exception(f'{name} has no field {field_name}')
+

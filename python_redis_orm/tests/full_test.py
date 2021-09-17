@@ -173,7 +173,7 @@ def choices_test(connection_pool, prefix):
         status='bruh',
     )
     try:
-        task_challenge_1.save()
+        save_result = task_challenge_1.save()
         task_challenges = redis_root.get(TaskChallenge)
         have_exception = True
     except BaseException as ex:
@@ -488,105 +488,106 @@ def list_test(connection_pool, prefix):
 
 def non_blocking_test(connection_pool, prefix):
     have_exception = True
-    try:
-        
-        def task(data_count, use_non_blocking=True):
-            connection_pool = redis.ConnectionPool(
-                host=os.environ['REDIS_HOST'],
-                port=os.environ['REDIS_PORT'],
-                db=0,
-                decode_responses=True
-            )
-            redis_root = RedisRoot(
-                prefix=prefix,
-                connection_pool=connection_pool,
-                ignore_deserialization_errors=True
-            )
-            
-
-            def create_list():
-                if use_non_blocking:
-                    list_check_model_instance = redis_root.create_nb(
-                        ListCheckModel,
-                        redis_list=['update_list']
-                    )
-                    list_check_model_instance = redis_root.create_nb(
-                        ListCheckModel,
-                        redis_list=['delete_list']
-                    )
-                else:
-                    list_check_model_instance = redis_root.create(
-                        ListCheckModel,
-                        redis_list=['update_list']
-                    )
-                    list_check_model_instance = redis_root.create(
-                        ListCheckModel,
-                        redis_list=['delete_list']
-                    )
-            
-            def update_list():
-                to_update = redis_root.get(
-                    ListCheckModel,
-                    redis_list=['update_list']
-                )
-                if use_non_blocking:
-                    updated_instance = redis_root.update_nb(
-                        ListCheckModel,
-                        to_update,
-                        redis_list=['now_updated_list']
-                    )
-                else:
-                    updated_instance = redis_root.update(
-                        ListCheckModel,
-                        to_update,
-                        redis_list=['now_updated_list']
-                    )
-            
-            def delete_list():
-                to_delete = redis_root.get(
-                    ListCheckModel,
-                    redis_list=['delete_list']
-                )
-                if use_non_blocking:
-                    redis_root.delete_nb(
-                        ListCheckModel,
-                        to_delete,
-                    )
-                else:
-                    redis_root.delete(
-                        ListCheckModel,
-                        to_delete,
-                    )
-            
-            
-            tests = [
-                create_list,
-                update_list,
-                delete_list,
-            ]
-            for test in tests:
-                for i in data_count:
-                    test()
-            
-            clean_db_after_test(connection_pool, prefix)
-        
-        data_count = 100
-        nb_started_in = datetime.datetime.now()
-        task(data_count, True)
-        nb_ended_in = datetime.datetime.now()
-        nb_time = (nb_ended_in - nb_started_in).total_seconds()
-        have_exception = not async_result
-        b_started_in = datetime.datetime.now()
-        task(data_count, False)
-        b_ended_in = datetime.datetime.now()
-        b_time = (b_ended_in - b_started_in).total_seconds()
-        
-        nb_percent = round((nb_time /b_time - 1) * 100, 2)
-        nb_symbol = ('+' if nb_percent > 0 else '')
-        print(f'Non blocking gives {nb_symbol}{nb_percent}% efficiency')
     
-    except BaseException as ex:
-        print(ex)
+    # try:
+    
+    def task(data_count, use_non_blocking):
+        connection_pool = redis.ConnectionPool(
+            host=os.environ['REDIS_HOST'],
+            port=os.environ['REDIS_PORT'],
+            db=0,
+            decode_responses=True
+        )
+        redis_root = RedisRoot(
+            prefix=prefix,
+            connection_pool=connection_pool,
+            ignore_deserialization_errors=True
+        )
+        
+        for i in range(data_count):
+            redis_root.create(
+                ListCheckModel,
+                redis_list=['update_list']
+            )
+            redis_root.create(
+                ListCheckModel,
+                redis_list=['delete_list']
+            )
+        
+        def create_list():
+            if use_non_blocking:
+                list_check_model_instance = redis_root.create_nb(
+                    ListCheckModel,
+                    redis_list=['create_list']
+                )
+            else:
+                list_check_model_instance = redis_root.create(
+                    ListCheckModel,
+                    redis_list=['create_list']
+                )
+        
+        def update_list():
+            to_update = redis_root.get(
+                ListCheckModel,
+                redis_list=['update_list']
+            )
+            if use_non_blocking:
+                updated_instance = redis_root.update_nb(
+                    ListCheckModel,
+                    to_update,
+                    redis_list=['now_updated_list']
+                )
+            else:
+                updated_instance = redis_root.update(
+                    ListCheckModel,
+                    to_update,
+                    redis_list=['now_updated_list']
+                )
+        
+        def delete_list():
+            to_delete = redis_root.get(
+                ListCheckModel,
+                redis_list=['delete_list']
+            )
+            if use_non_blocking:
+                redis_root.delete_nb(
+                    ListCheckModel,
+                    to_delete,
+                )
+            else:
+                redis_root.delete(
+                    ListCheckModel,
+                    to_delete,
+                )
+        
+        tests = [
+            create_list,
+            update_list,
+            delete_list,
+        ]
+        for test in tests:
+            for i in range(data_count):
+                test()
+    
+    data_count = 100
+    clean_db_after_test(connection_pool, prefix)
+    nb_started_in = datetime.datetime.now()
+    task(data_count, True)
+    nb_ended_in = datetime.datetime.now()
+    nb_time = (nb_ended_in - nb_started_in).total_seconds()
+    clean_db_after_test(connection_pool, prefix)
+    b_started_in = datetime.datetime.now()
+    task(data_count, False)
+    b_ended_in = datetime.datetime.now()
+    b_time = (b_ended_in - b_started_in).total_seconds()
+    clean_db_after_test(connection_pool, prefix)
+    
+    nb_percent = round((nb_time / b_time - 1) * 100, 2)
+    nb_symbol = ('+' if nb_percent > 0 else '')
+    print(f'Non blocking gives {nb_symbol}{nb_percent}% efficiency')
+    have_exception = False
+    # except BaseException as ex:
+    #     print(ex)
     
     clean_db_after_test(connection_pool, prefix)
     return have_exception
@@ -687,13 +688,12 @@ def save_override_test(connection_pool, prefix):
 
 
 def performance_test(connection_pool, prefix):
-    
     have_exception = False
     try:
         
-        async def run_test(count, model):
+        def run_test(count, model):
             
-            async def test(count, model, **test_params):
+            def test(count, model, **test_params):
                 real_test_params = {
                     'use_keys': True,
                     'use_non_blocking': True
@@ -701,43 +701,40 @@ def performance_test(connection_pool, prefix):
                 for key in real_test_params.copy():
                     if key in test_params.keys():
                         real_test_params[key] = test_params[key]
-        
-                async def create_instances(redis_root, count, use_non_blocking, model):
-            
-                    async def create_instance(redis_root, model):
-                        return redis_root.create(model)
-            
+                
+                def create_instances(redis_root, count, use_non_blocking, model):
+                    
                     if use_non_blocking:
                         started_in = datetime.datetime.now()
-                        results = await asyncio.gather(*[
-                            create_instance(redis_root, model)
+                        results = [
+                            redis_root.create_nb(model)
                             for i in range(count)
-                        ])
+                        ]
                         ended_in = datetime.datetime.now()
                     else:
                         started_in = datetime.datetime.now()
                         results = [
-                            await create_instance(redis_root, model)
+                            redis_root.create(model)
                             for i in range(count)
                         ]
                         ended_in = datetime.datetime.now()
-            
+                    
                     time_took = (ended_in - started_in).total_seconds()
                     fields_count = len(results[0].keys()) * count
                     clean_db_after_test(connection_pool, prefix)
                     return [time_took, count, fields_count]
-        
+                
                 redis_root = RedisRoot(
                     prefix=prefix,
                     connection_pool=connection_pool,
                     ignore_deserialization_errors=True,
                     use_keys=real_test_params['use_keys']
                 )
-        
-                test_result = await create_instances(redis_root, count, real_test_params['use_non_blocking'], model)
-        
+                
+                test_result = create_instances(redis_root, count, real_test_params['use_non_blocking'], model)
+                
                 return test_result
-    
+            
             test_confs = [
                 {
                     'use_keys': False,
@@ -755,11 +752,11 @@ def performance_test(connection_pool, prefix):
                     'use_keys': True,
                     'use_non_blocking': True,
                 },
-    
+            
             ]
-    
+            
             test_confs_results = [
-                await test(count, model, **test_conf)
+                test(count, model, **test_conf)
                 for test_conf in test_confs
             ]
             
@@ -780,9 +777,9 @@ def performance_test(connection_pool, prefix):
             print(f'\n\n'
                   f'Best configuration: {min_conf_text}\n')
         
-        count = 100
+        count = 1000
         model = TaskChallenge
-        asyncio.run(run_test(count, model))
+        run_test(count, model)
     except BaseException as ex:
         print(ex)
         have_exception = True

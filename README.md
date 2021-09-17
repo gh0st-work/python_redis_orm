@@ -88,29 +88,6 @@ Obviously, you need to install and run redis server on your machine, we support 
 
 # CRUD
 ```python
-example_instance = ExampleModel(example_field='example_data').save() # - to create an instance and get its data dict
-# or:
-example_instance = redis_root.create(ExampleModel, example_field='example_data')
-filtered_example_instances = redis_root.get(ExampleModel, example_field='example_data') # - to get all ExampleModel instances with example_field filter and get its data dict
-ordered_instances = redis_root.order(filtered_example_instances, '-id') # - to get ordered filtered_example_instances by id ('-' for reverse)
-updated_example_instances = redis_root.update(ExampleModel, ordered_instances, example_field='another_example_data') # - to update all ordered_instances example_field with value 'another_example_data' and get its data dict
-redis_root.delete(ExampleModel, updated_example_instances) # - to delete updated_example_instances
-
-# Non-blocking funcs are the same, just add "_nb" to the end:
-# ExampleModel(...).save_nb()
-# redis_root.create_nb(...)
-# redis_root.update_nb(...)
-# redis_root.delete_nb(...)
-
-```
-
-
-# Example usage
-
-All features:
-
-[full_test.py](https://github.com/gh0st-work/python_redis_orm/blob/master/python_redis_orm/tests/full_test.py)
-```python
 import random
 import sys
 from time import sleep
@@ -286,7 +263,7 @@ def choices_test(connection_pool, prefix):
         status='bruh',
     )
     try:
-        task_challenge_1.save()
+        save_result = task_challenge_1.save()
         task_challenges = redis_root.get(TaskChallenge)
         have_exception = True
     except BaseException as ex:
@@ -499,56 +476,6 @@ def meta_ttl_test(connection_pool, prefix):
     return have_exception
 
 
-def economy_test(connection_pool, prefix):
-    have_exception = True
-    try:
-        
-        redis_root = RedisRoot(
-            prefix=prefix,
-            connection_pool=connection_pool,
-            ignore_deserialization_errors=True,
-            economy=True
-        )
-        started_in_economy = datetime.datetime.now()
-        tests_count = 100
-        for i in range(tests_count):
-            task_challenge_1 = TaskChallenge(
-                redis_root=redis_root,
-                status='in_work',
-            ).save()
-            redis_root.update(TaskChallenge, task_challenge_1, account_checks_count=1)
-        ended_in_economy = datetime.datetime.now()
-        economy_time = (ended_in_economy - started_in_economy).total_seconds()
-        clean_db_after_test(connection_pool, prefix)
-        
-        redis_root = RedisRoot(
-            prefix=prefix,
-            connection_pool=connection_pool,
-            ignore_deserialization_errors=True,
-            economy=False
-        )
-        started_in_no_economy = datetime.datetime.now()
-        for i in range(tests_count):
-            task_challenge_1 = TaskChallenge(
-                redis_root=redis_root,
-                status='in_work',
-            ).save()
-            redis_root.update(TaskChallenge, task_challenge_1, account_checks_count=1)
-        ended_in_no_economy = datetime.datetime.now()
-        no_economy_time = (ended_in_no_economy - started_in_no_economy).total_seconds()
-        clean_db_after_test(connection_pool, prefix)
-        economy_percent = round((no_economy_time / economy_time - 1) * 100, 2)
-        economy_symbol = ('+' if economy_percent > 0 else '')
-        print(f'Economy gives {economy_symbol}{economy_percent}% efficiency')
-        if economy_symbol == '+':
-            have_exception = False
-    except BaseException as ex:
-        print(ex)
-    
-    clean_db_after_test(connection_pool, prefix)
-    return have_exception
-
-
 def use_keys_test(connection_pool, prefix):
     have_exception = True
     try:
@@ -649,157 +576,108 @@ def list_test(connection_pool, prefix):
     return have_exception
 
 
-def async_test(connection_pool, prefix):
+def non_blocking_test(connection_pool, prefix):
     have_exception = True
-    try:
+    # try:
         
-        async def async_task(data_count, use_async=True):
-            redis_roots = []
-            connection_pool = redis.ConnectionPool(
-                host=os.environ['REDIS_HOST'],
-                port=os.environ['REDIS_PORT'],
-                db=0,
-                decode_responses=True
+    def task(data_count, use_non_blocking):
+        connection_pool = redis.ConnectionPool(
+            host=os.environ['REDIS_HOST'],
+            port=os.environ['REDIS_PORT'],
+            db=0,
+            decode_responses=True
+        )
+        redis_root = RedisRoot(
+            prefix=prefix,
+            connection_pool=connection_pool,
+            ignore_deserialization_errors=True
+        )
+        
+        for i in range(data_count):
+            redis_root.create(
+                ListCheckModel,
+                redis_list=['update_list']
             )
-            for i in range(data_count):
-                redis_root = RedisRoot(
-                    prefix=prefix,
-                    connection_pool=connection_pool,
-                    ignore_deserialization_errors=True
+            redis_root.create(
+                ListCheckModel,
+                redis_list=['delete_list']
+            )
+
+        def create_list():
+            if use_non_blocking:
+                list_check_model_instance = redis_root.create_nb(
+                    ListCheckModel,
+                    redis_list=['create_list']
                 )
-                redis_roots.append(redis_root)
-            
-            async def create_list(redis_roots, redis_root_index, list_length):
-                some_list = [random.choice('ABCDEF') for i in range(list_length)]
-                redis_root = redis_roots[redis_root_index]
-                list_check_model_instance = ListCheckModel(
-                    redis_root=redis_root,
-                    redis_list=some_list
-                ).save()
-                return {
-                    'list': some_list,
-                    'id': list_check_model_instance['id']
-                }
-            
-            async def get_object_existence(redis_roots, redis_root_index, lists_with_ids):
-                exists = False
-                redis_root = redis_roots[redis_root_index]
-                objects = redis_root.get(ListCheckModel, redis_list=lists_with_ids['list'])
-                if objects:
-                    if len(objects) == 1:
-                        exists = objects[0]['id'] == lists_with_ids['id']
-                return exists
-            
-            async def update_list(redis_roots, redis_root_index, lists_with_ids):
-                result = False
-                redis_root = redis_roots[redis_root_index]
-                objects = redis_root.get(ListCheckModel, redis_list=lists_with_ids['list'])
-                if objects:
-                    if len(objects) == 1:
-                        obj = objects[0]
-                        new_list = deepcopy(lists_with_ids['list'])
-                        new_list.append('check_value')
-                        updated_obj = redis_root.update(ListCheckModel, obj, redis_list=new_list)
-                        updated_objects = redis_root.get(ListCheckModel, redis_list=new_list)
-                        if updated_objects:
-                            if len(updated_objects) == 1:
-                                result = updated_objects[0]['id'] == lists_with_ids['id']
-                return result
-            
-            async def delete_list(redis_roots, redis_root_index, id):
-                result = False
-                redis_root = redis_roots[redis_root_index]
-                objects = redis_root.get(ListCheckModel, id=id)
-                if objects:
-                    if len(objects) == 1:
-                        obj = objects[0]
-                        redis_root.delete(ListCheckModel, obj)
-                        objects = redis_root.get(ListCheckModel, id=id)
-                        if not objects:
-                            result = True
-                return result
-            
-            async def create_lists(lists_count, use_async=True):
-                if use_async:
-                    async_create_lists_tasks = [
-                        create_list(redis_roots, i, i + 100)
-                        for i in range(lists_count)
-                    ]
-                    list_of_lists_with_ids = await asyncio.gather(*async_create_lists_tasks)
-                else:
-                    list_of_lists_with_ids = [
-                        await create_list(redis_roots, i, i + 100)
-                        for i in range(lists_count)
-                    ]
-                return list_of_lists_with_ids
-            
-            async def get_objects_existence(list_of_lists_with_ids, use_async=True):
-                if use_async:
-                    async_get_object_by_list_tasks = [
-                        get_object_existence(redis_roots, i, lists_with_ids)
-                        for i, lists_with_ids in enumerate(list_of_lists_with_ids)
-                    ]
-                    list_of_results = await asyncio.gather(*async_get_object_by_list_tasks)
-                else:
-                    list_of_results = [
-                        await get_object_existence(redis_roots, i, lists_with_ids)
-                        for i, lists_with_ids in enumerate(list_of_lists_with_ids)
-                    ]
-                return list_of_results
-            
-            async def update_lists(list_of_lists_with_ids, use_async=True):
-                if use_async:
-                    async_update_list_tasks = [
-                        update_list(redis_roots, i, lists_with_ids)
-                        for i, lists_with_ids in enumerate(list_of_lists_with_ids)
-                    ]
-                    list_of_results = await asyncio.gather(*async_update_list_tasks)
-                else:
-                    list_of_results = [
-                        await update_list(redis_roots, i, lists_with_ids)
-                        for i, lists_with_ids in enumerate(list_of_lists_with_ids)
-                    ]
-                return list_of_results
-            
-            async def delete_lists(list_of_lists_with_ids, use_async=True):
-                if use_async:
-                    async_delete_list_tasks = [
-                        delete_list(redis_roots, i, lists_with_ids['id'])
-                        for i, lists_with_ids in enumerate(list_of_lists_with_ids)
-                    ]
-                    list_of_results = await asyncio.gather(*async_delete_list_tasks)
-                else:
-                    list_of_results = [
-                        await delete_list(redis_roots, i, lists_with_ids)
-                        for i, lists_with_ids in enumerate(list_of_lists_with_ids)
-                    ]
-                return list_of_results
-            
-            list_of_lists_with_ids = await create_lists(data_count, use_async)
-            list_of_results = await get_objects_existence(list_of_lists_with_ids, use_async)
-            if all(list_of_results):
-                list_of_results = await update_lists(list_of_lists_with_ids, use_async)
-                if all(list_of_results):
-                    list_of_results = await delete_lists(list_of_lists_with_ids, use_async)
-            return all(list_of_results)
+            else:
+                list_check_model_instance = redis_root.create(
+                    ListCheckModel,
+                    redis_list=['create_list']
+                )
         
-        data_count = 10
-        async_started_in = datetime.datetime.now()
-        async_result = asyncio.run(async_task(data_count))
-        async_ended_in = datetime.datetime.now()
-        async_time = (async_ended_in - async_started_in).total_seconds()
-        have_exception = not async_result
-        sync_started_in = datetime.datetime.now()
-        sync_result = asyncio.run(async_task(data_count, False))
-        sync_ended_in = datetime.datetime.now()
-        sync_time = (sync_ended_in - sync_started_in).total_seconds()
+        def update_list():
+            to_update = redis_root.get(
+                ListCheckModel,
+                redis_list=['update_list']
+            )
+            if use_non_blocking:
+                updated_instance = redis_root.update_nb(
+                    ListCheckModel,
+                    to_update,
+                    redis_list=['now_updated_list']
+                )
+            else:
+                updated_instance = redis_root.update(
+                    ListCheckModel,
+                    to_update,
+                    redis_list=['now_updated_list']
+                )
         
-        async_percent = round((async_time / sync_time - 1) * 100, 2)
-        async_symbol = ('+' if async_percent > 0 else '')
-        print(f'Async gives {async_symbol}{async_percent}% efficiency')
+        def delete_list():
+            to_delete = redis_root.get(
+                ListCheckModel,
+                redis_list=['delete_list']
+            )
+            if use_non_blocking:
+                redis_root.delete_nb(
+                    ListCheckModel,
+                    to_delete,
+                )
+            else:
+                redis_root.delete(
+                    ListCheckModel,
+                    to_delete,
+                )
+        
+        tests = [
+            create_list,
+            update_list,
+            delete_list,
+        ]
+        for test in tests:
+            for i in range(data_count):
+                test()
     
-    except BaseException as ex:
-        print(ex)
+    
+    data_count = 100
+    clean_db_after_test(connection_pool, prefix)
+    nb_started_in = datetime.datetime.now()
+    task(data_count, True)
+    nb_ended_in = datetime.datetime.now()
+    nb_time = (nb_ended_in - nb_started_in).total_seconds()
+    clean_db_after_test(connection_pool, prefix)
+    b_started_in = datetime.datetime.now()
+    task(data_count, False)
+    b_ended_in = datetime.datetime.now()
+    b_time = (b_ended_in - b_started_in).total_seconds()
+    clean_db_after_test(connection_pool, prefix)
+
+    nb_percent = round((nb_time / b_time - 1) * 100, 2)
+    nb_symbol = ('+' if nb_percent > 0 else '')
+    print(f'Non blocking gives {nb_symbol}{nb_percent}% efficiency')
+    have_exception = False
+    # except BaseException as ex:
+    #     print(ex)
     
     clean_db_after_test(connection_pool, prefix)
     return have_exception
@@ -900,79 +778,75 @@ def save_override_test(connection_pool, prefix):
 
 
 def performance_test(connection_pool, prefix):
-    
     have_exception = False
     try:
         
-        async def run_test(count, model):
+        def run_test(count, model):
             
-            async def test(count, model, **test_params):
+            def test(count, model, **test_params):
                 real_test_params = {
                     'use_keys': True,
-                    'use_async': True
+                    'use_non_blocking': True
                 }
                 for key in real_test_params.copy():
                     if key in test_params.keys():
                         real_test_params[key] = test_params[key]
-        
-                async def create_instances(redis_root, count, use_async, model):
-            
-                    async def create_instance(redis_root, model):
-                        return redis_root.create(model)
-            
-                    if use_async:
+                
+                def create_instances(redis_root, count, use_non_blocking, model):
+                    
+                    if use_non_blocking:
                         started_in = datetime.datetime.now()
-                        results = await asyncio.gather(*[
-                            create_instance(redis_root, model)
+                        results = [
+                            redis_root.create_nb(model)
                             for i in range(count)
-                        ])
+                        ]
                         ended_in = datetime.datetime.now()
                     else:
                         started_in = datetime.datetime.now()
                         results = [
-                            await create_instance(redis_root, model)
+                            redis_root.create(model)
                             for i in range(count)
                         ]
                         ended_in = datetime.datetime.now()
-            
+                    
                     time_took = (ended_in - started_in).total_seconds()
                     fields_count = len(results[0].keys()) * count
                     clean_db_after_test(connection_pool, prefix)
                     return [time_took, count, fields_count]
-        
+                
                 redis_root = RedisRoot(
                     prefix=prefix,
                     connection_pool=connection_pool,
                     ignore_deserialization_errors=True,
                     use_keys=real_test_params['use_keys']
                 )
-        
-                test_result = await create_instances(redis_root, count, real_test_params['use_async'], model)
-        
+                
+                test_result = create_instances(redis_root, count, real_test_params['use_non_blocking'], model)
+                
                 return test_result
-    
+            
             test_confs = [
                 {
                     'use_keys': False,
-                    'use_async': False,
+                    'use_non_blocking': False,
                 },
                 {
                     'use_keys': False,
-                    'use_async': True,
+                    'use_non_blocking': True,
                 },
                 {
                     'use_keys': True,
-                    'use_async': False,
+                    'use_non_blocking': False,
                 },
                 {
                     'use_keys': True,
-                    'use_async': True,
+                    'use_non_blocking': True,
                 },
-    
+            
             ]
-    
+            
             test_confs_results = [
-                await test(count, model, **test_conf)
+                test(count, model, **test_conf)
                 for test_conf in test_confs
             ]
             
@@ -993,9 +867,9 @@ def performance_test(connection_pool, prefix):
             print(f'\n\n'
                   f'Best configuration: {min_conf_text}\n')
         
-        count = 100
+        count = 1000
         model = TaskChallenge
-        asyncio.run(run_test(count, model))
+        run_test(count, model)
     except BaseException as ex:
         print(ex)
         have_exception = True
@@ -1024,11 +898,10 @@ def run_tests():
         delete_test,
         save_consistency_test,
         meta_ttl_test,
-        economy_test,
         use_keys_test,
         list_test,
         dict_test,
-        async_test,
+        non_blocking_test,
         foreign_key_test,
         many_to_many_test,
         save_override_test,
