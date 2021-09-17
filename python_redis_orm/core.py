@@ -1,9 +1,8 @@
+import asyncio
 import datetime
 import decimal
 import json
 from copy import deepcopy
-from inspect import isfunction
-
 import pytz
 import redis
 
@@ -63,7 +62,7 @@ class RedisField:
     def deserialize_value(self, value, redis_root):
         self.deserialize_value_check_null(value, redis_root)
         return value
-    
+
 
 class RedisString(RedisField):
     
@@ -350,24 +349,23 @@ class RedisManyToMany(RedisList):
 
 class RedisRoot:
     
+    ### INIT ###
+    
     def __init__(
         self,
         connection_pool=None,
         prefix='redis_test',
         ignore_deserialization_errors=True,
         save_consistency=False,
-        economy=False,
         use_keys=True,
     ):
         connection_pool = check_callable(connection_pool)
         prefix = check_callable(prefix)
         ignore_deserialization_errors = check_callable(ignore_deserialization_errors)
         save_consistency = check_callable(save_consistency)
-        economy = check_callable(economy)
         use_keys = check_callable(use_keys)
         check_types(ignore_deserialization_errors, bool)
         check_types(save_consistency, bool)
-        check_types(economy, bool)
         check_types(use_keys, bool)
         self.registered_models = []
         self.registered_django_models = {}
@@ -381,26 +379,14 @@ class RedisRoot:
         self.connection_pool = self._get_connection_pool(connection_pool)
         self.ignore_deserialization_errors = ignore_deserialization_errors
         self.save_consistency = save_consistency
-        self.economy = economy
         self.use_keys = use_keys
+        self.creating = {}
+        self.wait_creating = False
     
     @property
     def redis_instance(self):
         redis_instance = redis.Redis(connection_pool=self.connection_pool)
         return redis_instance
-    
-    @property
-    def cached_models(self):
-        return self.registered_models
-    
-    def fast_get_keys_values(self, string):
-        if self.use_keys:
-            keys = list(self.redis_instance.keys(string))
-        else:
-            keys = list(self.redis_instance.scan_iter(string))
-        values = self.redis_instance.mget(keys)
-        results = dict(zip(keys, values))
-        return results
     
     def _get_connection_pool(self, connection_pool):
         if isinstance(connection_pool, redis.ConnectionPool):
@@ -425,6 +411,8 @@ class RedisRoot:
                     f'Default config ({default_host}:{default_port}, db={default_db}) failed, please provide connection_pool to {self.__class__.__name__}')
         return self.connection_pool
     
+    ### UTILS ###
+    
     def register_models(self, models_list):
         for model in models_list:
             if issubclass(model, RedisModel):
@@ -432,6 +420,148 @@ class RedisRoot:
                     self.registered_models.append(model)
             else:
                 raise Exception(f'{model.__name__} class is not RedisModel')
+    
+    def order(self, instances, field_name):
+        reverse = False
+        if field_name.startswith('-'):
+            reverse = True
+            field_name = field_name[1:]
+        
+        return sorted(instances, key=(lambda instance: instance[field_name]), reverse=reverse)
+    
+    def wait_creation(self):
+        while self.wait_creating:
+            pass
+        self.wait_creating = True
+    
+    def get_and_reserve_new_id(self, model):
+        
+        def really_new():
+            instances_with_ids = self.get(model, return_dict=True)
+            all_ids = [int(instance_id) for instance_id in list(instances_with_ids.keys())]
+            if all_ids:
+                max_id = max(all_ids)
+            else:
+                max_id = 0
+            new_id = int(max_id + 1)
+            self.creating[model] = [new_id]
+            return new_id
+        
+        self.wait_creation()
+        if model not in self.creating.keys():
+            new_id = really_new()
+        elif not len(self.creating[model]):
+            new_id = really_new()
+        else:
+            new_id = self.creating[model][-1] + 1
+        self.wait_creating = False
+        return new_id
+    
+    def remove_creating(self, model, instance_id):
+        self.wait_creation()
+        self.creating[model] = [
+            some_instance_id
+            for some_instance_id in self.creating[model].copy()
+            if some_instance_id != instance_id
+        ]
+        self.wait_creating = False
+    
+    ### GET ###
+    
+    def get(self, model, return_dict=False, **filters):
+        instances = self._get_all_model_instances(model, filters)
+        result = self._return_with_format(instances, return_dict)
+        return result
+    
+    def _get_all_model_instances(self, model, filters=None):
+        if filters is None:
+            filters = {}
+        instances_with_allowed = self._get_all_stored_model_instances(model, filters)
+        if self.save_consistency:
+            instances_with_allowed = self._check_fields_existence(model, instances_with_allowed, filters)
+        instances = self._get_instances_from_instances_with_allowed(instances_with_allowed)
+        return instances
+    
+    def _get_all_stored_model_instances(self, model, filters=None):
+        model_name = model.__name__
+        instances = self._get_instances_by_key(f'{self.prefix}:{model_name}:*')
+        instances_with_allowed = {}
+        for instance_id, instance_fields in instances.items():
+            for field_name, field_value in instance_fields.items():
+                allowed = self._filter_field_name(field_name, field_value, filters)
+                if instance_id not in instances_with_allowed.keys():
+                    instances_with_allowed[instance_id] = {}
+                instances_with_allowed[instance_id][field_name] = {
+                    'value': field_value,
+                    'allowed': allowed
+                }
+        return instances_with_allowed
+    
+    def _get_instances_by_key(self, key):
+        raw_instances = self.fast_get_keys_values(key)
+        instances = {}
+        for instance_key, fields_json in raw_instances.items():
+            prefix, model_name, instance_id = instance_key.split(':')
+            instance_id = int(instance_id)
+            fields_dict = json.loads(fields_json)
+            for field_name, raw_value in fields_dict.items():
+                value = self.deserialize_value(raw_value, model_name, field_name)
+                if instance_id not in instances.keys():
+                    instances[instance_id] = {}
+                instances[instance_id][field_name] = value
+        return instances
+    
+    def _check_fields_existence(self, model, instances_with_allowed, filters):
+        checked_instances = {}
+        fields = model.__dict__
+        cleaned_fields = {}
+        for field_name, field in fields.items():
+            if attr_is_real(field_name, field):
+                cleaned_fields[field_name] = field
+        if 'id' not in cleaned_fields.keys():
+            cleaned_fields['id'] = RedisString(null=True)
+        fields = cleaned_fields
+        for instance_id, instance_fields in instances_with_allowed.items():
+            checked_instances[instance_id] = {}
+            for field_name, field in fields.items():
+                if attr_is_real(field_name, field):
+                    if field_name in instance_fields.keys():
+                        checked_instances[instance_id][field_name] = instance_fields[field_name]
+                    else:
+                        field.value = None
+                        cleaned_value = field.clean()
+                        allowed = self._filter_field_name(field_name, cleaned_value, filters)
+                        checked_instances[instance_id][field_name] = {
+                            'value': cleaned_value,
+                            'allowed': allowed
+                        }
+        return checked_instances
+    
+    def _get_instances_from_instances_with_allowed(self, instances_with_allowed):
+        instances = {}
+        for instance_id, instance_fields in instances_with_allowed.items():
+            instance_allowed = all([
+                instance_field_data['allowed']
+                for instance_field_data in instance_fields.values()
+            ])
+            if instance_allowed and instance_id not in instances.keys():
+                instances[instance_id] = {
+                    instance_field_name: instance_field_data['value']
+                    for instance_field_name, instance_field_data in instance_fields.items()
+                }
+        return instances
+    
+    ### DESERIALIZE ###
+    
+    def deserialize_value(self, raw_value, model_name, field_name):
+        value = raw_value
+        saved_model = self._get_registered_model_by_name(model_name)
+        if type(saved_model) != str:
+            if issubclass(saved_model, RedisModel):
+                saved_field_instance = self._get_field_instance_by_name(field_name, saved_model)
+                if issubclass(saved_field_instance.__class__, RedisField):
+                    value = self._deserialize_value_by_field_instance(raw_value, saved_field_instance)
+        return value
     
     def _get_registered_model_by_name(self, model_name):
         found = False
@@ -478,54 +608,53 @@ class RedisRoot:
                 raise Exception(f'{raw_value} can not be deserialized like {field_instance.__class__.__name__}')
         return value
     
-    def deserialize_value(self, raw_value, model_name, field_name):
-        value = raw_value
-        saved_model = self._get_registered_model_by_name(model_name)
-        if type(saved_model) != str:
-            if issubclass(saved_model, RedisModel):
-                saved_field_instance = self._get_field_instance_by_name(field_name, saved_model)
-                if issubclass(saved_field_instance.__class__, RedisField):
-                    value = self._deserialize_value_by_field_instance(raw_value, saved_field_instance)
-        return value
+    ### FILTER ###
     
-    def _return_with_format(self, instances, return_dict=False):
-        if return_dict:
-            return instances
+    def _filter_field_name(self, field_name, value, raw_filters):
+        allowed_list = [True]
+        for filter_param in raw_filters.keys():
+            filter_by = raw_filters[filter_param]
+            fields_to_filter, filter_type = self._split_filtering(filter_param)
+            if field_name == fields_to_filter[0]:
+                fields_to_filter = fields_to_filter[1:]
+                allowed_list.append(self._filter(value, fields_to_filter, filter_type, filter_by))
+        allowed = all(allowed_list)
+        return allowed
+    
+    def _split_filtering(self, filter_param):
+        filter_field_name, filter_type = filter_param, 'exact'
+        if '__' in filter_param:
+            filter_param_split = filter_param.split('__')
+            if filter_param_split[-1] in ['exact', 'iexact', 'contains', 'icontains', 'in', 'gt', 'gte', 'lt', 'lte',
+                                          'startswith', 'istartswith', 'endswith', 'iendswith', 'range']:
+                fields_to_filter = filter_param_split[:-1]
+                filter_type = filter_param_split[-1]
+            else:
+                fields_to_filter = filter_param_split
         else:
-            instances_list = [
-                {
-                    'id': instance_id,
-                    **instance_fields
-                }
-                for instance_id, instance_fields in instances.items()
-            ]
-            return instances_list
+            fields_to_filter = [filter_field_name]
+        return fields_to_filter, filter_type
     
-    def _check_fields_existence(self, model, instances_with_allowed, filters):
-        checked_instances = {}
-        fields = model.__dict__
-        cleaned_fields = {}
-        for field_name, field in fields.items():
-            if attr_is_real(field_name, field):
-                cleaned_fields[field_name] = field
-        if 'id' not in cleaned_fields.keys():
-            cleaned_fields['id'] = RedisString(null=True)
-        fields = cleaned_fields
-        for instance_id, instance_fields in instances_with_allowed.items():
-            checked_instances[instance_id] = {}
-            for field_name, field in fields.items():
-                if attr_is_real(field_name, field):
-                    if field_name in instance_fields.keys():
-                        checked_instances[instance_id][field_name] = instance_fields[field_name]
-                    else:
-                        field.value = None
-                        cleaned_value = field.clean()
-                        allowed = self._filter_field_name(field_name, cleaned_value, filters)
-                        checked_instances[instance_id][field_name] = {
-                            'value': cleaned_value,
-                            'allowed': allowed
-                        }
-        return checked_instances
+    def _filter(self, value, fields_to_filter, filter_type, filter_by):
+        for field_to_filter in fields_to_filter:
+            if value in ['null', None]:
+                value = None
+            else:
+                try:
+                    value = value[field_to_filter]
+                except BaseException as ex:
+                    print(f'Exception: {ex}\n'
+                          f'Info: {field_to_filter}, {value}\n'
+                          f'Maybe: deep filtering is not included on this model')
+                    value = None
+        if isinstance(value, datetime.datetime) and isinstance(filter_by, datetime.datetime):
+            value = value.replace(tzinfo=pytz.UTC)
+            filter_by = filter_by.replace(tzinfo=pytz.UTC)
+        try:
+            allowed = self._filter_value(value, filter_type, filter_by)
+        except:
+            allowed = False
+        return allowed
     
     def _filter_value(self, value, filter_type, filter_by):
         allowed = True
@@ -576,124 +705,59 @@ class RedisRoot:
                 allowed = False
         return allowed
     
-    def _split_filtering(self, filter_param):
-        filter_field_name, filter_type = filter_param, 'exact'
-        if '__' in filter_param:
-            filter_param_split = filter_param.split('__')
-            if filter_param_split[-1] in ['exact', 'iexact', 'contains', 'icontains', 'in', 'gt', 'gte', 'lt', 'lte',
-                                          'startswith', 'istartswith', 'endswith', 'iendswith', 'range']:
-                fields_to_filter = filter_param_split[:-1]
-                filter_type = filter_param_split[-1]
-            else:
-                fields_to_filter = filter_param_split
-        else:
-            fields_to_filter = [filter_field_name]
-        return fields_to_filter, filter_type
+    ### UPDATE ###
     
-    def _filter(self, value, fields_to_filter, filter_type, filter_by):
-        for field_to_filter in fields_to_filter:
-            if value in ['null', None]:
-                value = None
-            else:
-                try:
-                    value = value[field_to_filter]
-                except BaseException as ex:
-                    print(f'Exception: {ex}\n'
-                          f'Info: {field_to_filter}, {value}\n'
-                          f'Maybe: deep filtering is not included on this model')
-                    value = None
-        if isinstance(value, datetime.datetime) and isinstance(filter_by, datetime.datetime):
-            value = value.replace(tzinfo=pytz.UTC)
-            filter_by = filter_by.replace(tzinfo=pytz.UTC)
-        try:
-            allowed = self._filter_value(value, filter_type, filter_by)
-        except:
-            allowed = False
-        return allowed
-    
-    def _filter_field_name(self, field_name, value, raw_filters):
-        allowed_list = [True]
-        for filter_param in raw_filters.keys():
-            filter_by = raw_filters[filter_param]
-            fields_to_filter, filter_type = self._split_filtering(filter_param)
-            if field_name == fields_to_filter[0]:
-                fields_to_filter = fields_to_filter[1:]
-                allowed_list.append(self._filter(value, fields_to_filter, filter_type, filter_by))
-        allowed = all(allowed_list)
-        return allowed
-    
-    def _get_instances_by_key(self, key):
-        raw_instances = self.fast_get_keys_values(key)
-        instances = {}
-        for instance_key, fields_json in raw_instances.items():
+    def update(self, model, instances=None, return_dict=False, renew_ttl=False, new_ttl=None, **fields_to_update):
+        model_name = model.__name__
+        instance_keys_to_update = self._get_instance_keys_to_update(instances, model_name)
+        updated_instances = {}
+        for instance_key in instance_keys_to_update:
             prefix, model_name, instance_id = instance_key.split(':')
             instance_id = int(instance_id)
-            fields_dict = json.loads(fields_json)
-            for field_name, raw_value in fields_dict.items():
-                value = self.deserialize_value(raw_value, model_name, field_name)
-                if instance_id not in instances.keys():
-                    instances[instance_id] = {}
-                instances[instance_id][field_name] = value
-        return instances
+            fields_to_write = self._update_serialize_fields(instance_key, model, fields_to_update)
+            self._update_confirm(model, instance_key, renew_ttl, new_ttl, fields_to_write)
+            updated_instances[instance_id] = fields_to_write
+        result = self._return_with_format(updated_instances, return_dict)
+        return result
     
-    def _get_all_stored_model_instances(self, model, filters=None):
+    def update_nb(self, model, instances=None, return_dict=False, renew_ttl=False, new_ttl=None, **fields_to_update):
         model_name = model.__name__
-        instances = self._get_instances_by_key(f'{self.prefix}:{model_name}:*')
-        instances_with_allowed = {}
-        for instance_id, instance_fields in instances.items():
-            for field_name, field_value in instance_fields.items():
-                allowed = self._filter_field_name(field_name, field_value, filters)
-                if instance_id not in instances_with_allowed.keys():
-                    instances_with_allowed[instance_id] = {}
-                instances_with_allowed[instance_id][field_name] = {
-                    'value': field_value,
-                    'allowed': allowed
-                }
-        return instances_with_allowed
+        instance_keys_to_update = self._get_instance_keys_to_update(instances, model_name)
+        updated_instances = {}
+        loop = asyncio.get_event_loop()
+        for instance_key in instance_keys_to_update:
+            prefix, model_name, instance_id = instance_key.split(':')
+            instance_id = int(instance_id)
+            fields_to_write = self._update_serialize_fields(instance_key, model, fields_to_update)
+            loop.create_task(
+                self._update_confirm_async(model, instance_key, renew_ttl, new_ttl, fields_to_write)
+            )
+            updated_instances[instance_id] = fields_to_write
+        result = self._return_with_format(updated_instances, return_dict)
+        return result
     
-    def _get_instances_from_instances_with_allowed(self, instances_with_allowed):
-        instances = {}
-        for instance_id, instance_fields in instances_with_allowed.items():
-            instance_allowed = all([
-                instance_field_data['allowed']
-                for instance_field_data in instance_fields.values()
-            ])
-            if instance_allowed and instance_id not in instances.keys():
-                instances[instance_id] = {
-                    instance_field_name: instance_field_data['value']
-                    for instance_field_name, instance_field_data in instance_fields.items()
-                }
-        return instances
+    def _get_instance_keys_to_update(self, instances, model_name):
+        keys_to_update = []
+        if self.use_keys:
+            if instances is None:
+                keys_to_update += list(self.redis_instance.keys(f'{self.prefix}:{model_name}:*'))
+            else:
+                ids_to_update = get_ids_from_untyped_data(instances)
+                for instance_id in ids_to_update:
+                    keys_to_update += list(self.redis_instance.keys(f'{self.prefix}:{model_name}:{instance_id}'))
+        else:
+            if instances is None:
+                keys_to_update += list(self.redis_instance.scan_iter(f'{self.prefix}:{model_name}:*'))
+            else:
+                ids_to_update = get_ids_from_untyped_data(instances)
+                for instance_id in ids_to_update:
+                    keys_to_update += list(self.redis_instance.scan_iter(f'{self.prefix}:{model_name}:{instance_id}'))
+        return keys_to_update
     
-    def _get_all_model_instances(self, model, filters=None):
-        if filters is None:
-            filters = {}
-        instances_with_allowed = self._get_all_stored_model_instances(model, filters)
-        if self.save_consistency:
-            instances_with_allowed = self._check_fields_existence(model, instances_with_allowed, filters)
-        instances = self._get_instances_from_instances_with_allowed(instances_with_allowed)
-        return instances
-    
-    def get(self, model, return_dict=False, **filters):
-        instances = self._get_all_model_instances(model, filters)
-        return self._return_with_format(instances, return_dict)
-    
-    def order(self, instances, field_name):
-        reverse = False
-        if field_name.startswith('-'):
-            reverse = True
-            field_name = field_name[1:]
-        
-        return sorted(instances, key=(lambda instance: instance[field_name]), reverse=reverse)
-    
-    def _update_by_instance_key(self, instance_key, fields_to_update, renew_ttl, new_ttl):
-        updated_data = None
-        prefix, model_name, instance_id = instance_key.split(':')
-        model = self._get_registered_model_by_name(model_name)
-        instance_id = int(instance_id)
+    def _update_serialize_fields(self, instance_key, model, fields_to_update):
         instance_data_json = self.redis_instance.get(instance_key)
         instance_data = json.loads(instance_data_json)
-        data_to_write = {}
+        serialized_data = {}
         for field_name, field_data in instance_data.items():
             saved_field_instance = self._get_field_instance_by_name(field_name, model)
             if field_name in fields_to_update.keys():
@@ -701,22 +765,66 @@ class RedisRoot:
                 cleaned_value = saved_field_instance.clean()
             else:
                 cleaned_value = field_data
-            if instance_key not in data_to_write.keys():
-                data_to_write[instance_key] = {}
-            data_to_write[instance_key][field_name] = cleaned_value
-        for instance_key, fields_to_write in data_to_write.items():
-            ttl = None
-            if renew_ttl:
-                ttl = model.get_model_ttl()
-            elif new_ttl:
-                ttl = new_ttl
-            fields_to_write_json = json.dumps(fields_to_write)
-            self.redis_instance.set(instance_key, fields_to_write_json, ex=ttl)
-            updated_data = {
-                'model': model,
-                'id': instance_id
-            }
-        return updated_data
+            serialized_data[field_name] = cleaned_value
+        return serialized_data
+    
+    def _update_confirm(self, model, instance_key, renew_ttl, new_ttl, fields_to_write):
+        ttl = None
+        if renew_ttl:
+            ttl = model.get_model_ttl()
+        elif new_ttl:
+            ttl = new_ttl
+        fields_to_write_json = json.dumps(fields_to_write)
+        self.redis_instance.set(instance_key, fields_to_write_json, ex=ttl)
+    
+    async def _update_confirm_async(self, model, instance_key, renew_ttl, new_ttl, fields_to_write):
+        ttl = None
+        if renew_ttl:
+            ttl = model.get_model_ttl()
+        elif new_ttl:
+            ttl = new_ttl
+        fields_to_write_json = json.dumps(fields_to_write)
+        self.redis_instance.set(instance_key, fields_to_write_json, ex=ttl)
+    
+    ### DELETE ###
+    
+    def delete(self, model, instances=None):
+        model_name = model.__name__
+        self._confirm_delete(model_name, instances)
+    
+    def delete_nb(self, model, instances=None):
+        model_name = model.__name__
+        asyncio.get_event_loop().create_task(
+            self._confirm_delete_async(model_name, instances)
+        )
+    
+    def _confirm_delete(self, model_name, instances):
+        if instances is None:
+            for key in self.redis_instance.keys(f'{self.prefix}:{model_name}:*'):
+                self._delete_by_key(key)
+        else:
+            ids_to_delete = get_ids_from_untyped_data(instances)
+            for instance_id in ids_to_delete:
+                for key in self.redis_instance.keys(f'{self.prefix}:{model_name}:{instance_id}'):
+                    self._delete_by_key(key)
+    
+    async def _confirm_delete_async(self, model_name, instances):
+        self._confirm_delete(model_name, instances)
+    
+    def _delete_by_key(self, key):
+        self.redis_instance.delete(key)
+    
+    ### CREATE ###
+    
+    def create(self, model, **params):
+        params = self._get_allowed_model_params(model, params)
+        redis_instance = model(redis_root=self, **params).save()
+        return redis_instance
+    
+    def create_nb(self, model, **params):
+        params = self._get_allowed_model_params(model, params)
+        redis_instance = model(redis_root=self, **params).save_nb()
+        return redis_instance
     
     def _get_allowed_model_params(self, model, params):
         model_attrs = model.__dict__
@@ -727,53 +835,29 @@ class RedisRoot:
                     allowed_params[param_name] = params[param_name]
         return allowed_params
     
-    def update(self, model, instances=None, return_dict=False, renew_ttl=False, new_ttl=None,
-               **fields_to_update):
-        model_name = model.__name__
-        updated_datas = []
-        if instances is None:
-            for key in self.redis_instance.keys(f'{self.prefix}:{model_name}:*'):
-                updated_data = self._update_by_instance_key(key, fields_to_update, renew_ttl, new_ttl)
-                if updated_data is not None:
-                    updated_datas.append(updated_data)
+    ### HELPERS ###
+    
+    def _return_with_format(self, instances, return_dict=False):
+        if return_dict:
+            return instances
         else:
-            ids_to_update = get_ids_from_untyped_data(instances)
-            for instance_id in ids_to_update:
-                for key in self.redis_instance.keys(f'{self.prefix}:{model_name}:{instance_id}'):
-                    updated_data = self._update_by_instance_key(key, fields_to_update, renew_ttl, new_ttl)
-                    if updated_data is not None:
-                        updated_datas.append(updated_data)
-        updated_instances = {}
-        for updated_data in updated_datas:
-            updated_model = updated_data['model']
-            updated_id = updated_data['id']
-            if self.economy:
-                updated_instances[updated_id] = {'id': updated_id}
-            else:
-                updated_instance_qs = self.get(updated_model, id=updated_id)
-                updated_instance = updated_instance_qs[0]
-                updated_instances[updated_id] = updated_instance
-        result = self._return_with_format(updated_instances, return_dict)
-        return result
+            instances_list = [
+                {
+                    'id': instance_id,
+                    **instance_fields
+                }
+                for instance_id, instance_fields in instances.items()
+            ]
+            return instances_list
     
-    def _delete_by_key(self, key):
-        self.redis_instance.delete(key)
-    
-    def delete(self, model, instances=None):
-        model_name = model.__name__
-        if instances is None:
-            for key in self.redis_instance.keys(f'{self.prefix}:{model_name}:*'):
-                self._delete_by_key(key)
+    def fast_get_keys_values(self, string):
+        if self.use_keys:
+            keys = list(self.redis_instance.keys(string))
         else:
-            ids_to_delete = get_ids_from_untyped_data(instances)
-            for instance_id in ids_to_delete:
-                for key in self.redis_instance.keys(f'{self.prefix}:{model_name}:{instance_id}'):
-                    self._delete_by_key(key)
-    
-    def create(self, model, **params):
-        params = self._get_allowed_model_params(model, params)
-        redis_instance = model(redis_root=self, **params).save()
-        return redis_instance
+            keys = list(self.redis_instance.scan_iter(string))
+        values = self.redis_instance.mget(keys)
+        results = dict(zip(keys, values))
+        return results
 
 
 ### REDIS MODEL ###
@@ -782,12 +866,14 @@ class RedisRoot:
 class RedisModel:
     id = RedisId()
     
+    ### INIT ###
+    
     def __init__(self, redis_root=None, **kwargs):
         self.__model_data__ = {
             'redis_root': None,
             'name': None,
-            'fields': None,
-            'meta': {}
+            'fields': {},
+            'meta': {},
         }
         
         if isinstance(redis_root, RedisRoot):
@@ -801,9 +887,16 @@ class RedisModel:
         else:
             raise Exception(f'{redis_root.__name__} type is {type(redis_root)}. Allowed only RedisRoot')
     
-    def _check_meta_ttl(self, ttl):
-        check_types(ttl, (int, float))
-        return ttl
+    def _renew_fields(self):
+        class_fields = self.__class__.__dict__.copy()
+        fields = {}
+        for field_name, field in class_fields.items():
+            if attr_is_real(field_name, field):
+                if field_name == 'Meta':
+                    self._set_meta(self.__class__.Meta.__dict__)
+                else:
+                    fields[field_name] = self._get_initial_model_field(field_name)
+        self.__model_data__['fields'] = fields
     
     def _set_meta(self, meta_fields):
         allowed_meta_fields_with_check_functions = {
@@ -815,40 +908,46 @@ class RedisModel:
                 if cleaned_value is not None:
                     self.__model_data__['meta'][field_name] = cleaned_value
     
+    def _check_meta_ttl(self, ttl):
+        check_types(ttl, (int, float))
+        return ttl
+    
     def _get_initial_model_field(self, field_name):
-        name = self.__model_data__['name']
+        name = self.get('name')
         if field_name in self.__class__.__dict__.keys():
             return deepcopy(self.__class__.__dict__[field_name])
         else:
             raise Exception(f'{name} has no field {field_name}')
     
-    def _renew_fields(self):
-        class_fields = self.__class__.__dict__.copy()
-        fields = {}
-        for field_name, field in class_fields.items():
-            if attr_is_real(field_name, field):
-                if field_name == 'Meta':
-                    self._set_meta(self.__class__.Meta.__dict__)
-                else:
-                    fields[field_name] = self._get_initial_model_field(field_name)
-        self._get_new_id()
-        if 'id' not in fields.keys():
-            fields['id'] = self.id
-        self.__model_data__['fields'] = fields
-    
     def _fill_fields_values(self, field_values_dict):
         for name, value in field_values_dict.items():
-            fields = self.__model_data__['fields']
+            fields = self.get('fields')
             if name in fields.keys():
-                self.__model_data__['fields'][name].value = value
+                fields[name].value = value
             else:
                 raise Exception(f'{self.__class__.__name__} has no field {name}')
     
+    ### SAVE ###
+    
+    def save(self):
+        instance_key, fields_dict, deserialized_fields = self._serialize_data()
+        self._set_fields(instance_key, fields_dict)
+        return deserialized_fields
+    
+    def save_nb(self):
+        instance_key, fields_dict, deserialized_fields = self._serialize_data()
+        asyncio.get_event_loop().create_task(
+            self._set_field_async(instance_key, fields_dict)
+        )
+        return deserialized_fields
+    
     def _serialize_data(self):
-        redis_root = self.__model_data__['redis_root']
-        name = self.__model_data__['name']
-        fields = self.__model_data__['fields']
+        redis_root = self.get('redis_root')
+        name = self.get('name')
+        fields = self.get('fields')
         fields = dict(fields)
+        self._get_and_reserve_new_id()
+        fields['id'] = self.id
         instance_key = f'{redis_root.prefix}:{name}:{self.id.value}'
         deserialized_fields = {}
         cleaned_fields = {}
@@ -863,42 +962,36 @@ class RedisModel:
                     raise Exception(f'{ex} ({name} -> {field_name})')
         return instance_key, cleaned_fields, deserialized_fields
     
+    def _get_and_reserve_new_id(self):
+        redis_root = self.get('redis_root')
+        self.id.value = redis_root.get_and_reserve_new_id(self.__class__)
+    
+    def _set_fields(self, instance_key, fields_dict):
+        model_ttl = self.get_model_ttl()
+        redis_root = self.get('redis_root')
+        prefix, model_name, instance_id = instance_key.split(':')
+        instance_id = int(instance_id)
+        redis_instance = redis_root.redis_instance
+        fields_json = json.dumps(fields_dict)
+        redis_instance.set(instance_key, fields_json, ex=model_ttl)
+        redis_root.remove_creating(self.__class__, instance_id)
+    
+    async def _set_field_async(self, instance_key, fields_dict):
+        self._set_fields(instance_key, fields_dict)
+    
     def get_model_ttl(self):
         ttl = None
-        meta = self.__model_data__['meta']
+        meta = self.get('meta')
         if 'ttl' in meta.keys():
             ttl = meta['ttl']
         return ttl
     
-    def _set_fields(self):
-        instance_key, fields_dict, deserialized_fields = self._serialize_data()
-        model_ttl = self.get_model_ttl()
-        redis_root = self.__model_data__['redis_root']
-        prefix, model_name, instance_id = instance_key.split(':')
-        redis_instance = redis_root.redis_instance
-        fields_json = json.dumps(fields_dict)
-        redis_instance.set(instance_key, fields_json, ex=model_ttl)
-        saved_instance = deserialized_fields
-        return saved_instance
+    ### UTILS ###
     
-    def _get_new_id(self):
-        redis_root = self.__model_data__['redis_root']
-        instances_with_ids = redis_root.get(self.__class__, return_dict=True)
-        all_ids = [int(instance_id) for instance_id in list(instances_with_ids.keys())]
-        if all_ids:
-            max_id = max(all_ids)
-        else:
-            max_id = 0
-        self.id.value = int(max_id + 1)
-    
-    def save(self):
-        saved_instance = self._set_fields()
-        return saved_instance
-    
-    def set(self, **fields_with_values):
-        name = self.__model_data__['name']
-        fields = self.__model_data__['fields']
-        meta = self.__model_data__['meta']
+    def set(self, force=False, **fields_with_values):
+        name = self.get('name')
+        fields = self.get('fields')
+        meta = self.get('meta')
         for field_name, value in fields_with_values.items():
             if field_name in fields.keys():
                 field = fields[field_name]
@@ -908,11 +1001,13 @@ class RedisModel:
                 meta[field_name] = value
                 return meta[field_name]
             else:
-                raise Exception(f'{name} has no field {field_name}')
+                if force:
+                    fields[field_name] = value
+                else:
+                    raise Exception(f'{name} has no field {field_name}')
     
     def get(self, field_name):
         data = self.__model_data__
-        name = data['name']
         fields = data['fields']
         meta = data['meta']
         redis_root = data['redis_root']
@@ -924,7 +1019,11 @@ class RedisModel:
             return meta[field_name]
         elif field_name == 'redis_root':
             return redis_root
+        elif field_name == 'fields':
+            return fields
         elif field_name == 'name':
             return name
+        elif field_name == 'meta':
+            return meta
         else:
             raise Exception(f'{name} has no field {field_name}')

@@ -2,6 +2,7 @@
 
 ## **Python Redis ORM library that gives redis easy-to-use objects with fields and speeds a development up, inspired by Django ORM**
 
+
 [![Full test](https://github.com/gh0st-work/python_redis_orm/actions/workflows/python-app.yml/badge.svg?event=push)](https://github.com/gh0st-work/python_redis_orm/actions/workflows/python-app.yml)
 
 For one project, I needed to work with redis, but redis-py provides a minimum level of work with redis. I didn't find any Django-like ORM for redis, so I wrote this library, then there will be a port to Django.
@@ -32,7 +33,6 @@ For one project, I needed to work with redis, but redis-py provides a minimum le
     - **RedisDate** - for work with date, via python datetime.data
     - **RedisForeignKey** - for link to other instance
     - **RedisManyToMany** - for links to other instances
-
 - All fields supports:
     - Automatically serialization
     - Automatically deserialization
@@ -60,14 +60,8 @@ For one project, I needed to work with redis, but redis-py provides a minimum le
 - Built-in RedisModel class, with:
     - All fields that you want
     - TTL (Time To Live)
-- CRUD (Create Read Update Delete), in our variation: save, get, filter, order, update, delete:
-    - `example_instance = ExampleModel(example_field='example_data').save()` - to create an instance and get its data dict
-    - or:
-    - `example_instance = redis_root.create(ExampleModel, example_field='example_data')`
-    - `filtered_example_instances = redis_root.get(ExampleModel, example_field='example_data')` - to get all ExampleModel instances with example_field filter and get its data dict
-    - `ordered_instances = redis_root.order(filtered_example_instances, '-id')` - to get ordered filtered_example_instances by id ('-' for reverse)
-    - `updated_example_instances = redis_root.update(ExampleModel, ordered_instances, example_field='another_example_data')` - to update all ordered_instances example_field with value 'another_example_data' and get its data dict
-    - `redis_root.delete(ExampleModel, updated_example_instances)` - to delete updated_example_instances
+- CRUD (Create Read Update Delete)
+- Non-blocking usage! Any operation gives the same result as the default, but it just creates an asyncio task in the background instead of write inside the call
 
 
 # Installation
@@ -90,6 +84,25 @@ Obviously, you need to install and run redis server on your machine, we support 
 2. Create your models
 3. Call **register_models()** on your RedisRoot instance and provide list with your models
 4. Use our CRUD
+
+
+# CRUD
+```python
+example_instance = ExampleModel(example_field='example_data').save() # - to create an instance and get its data dict
+# or:
+example_instance = redis_root.create(ExampleModel, example_field='example_data')
+filtered_example_instances = redis_root.get(ExampleModel, example_field='example_data') # - to get all ExampleModel instances with example_field filter and get its data dict
+ordered_instances = redis_root.order(filtered_example_instances, '-id') # - to get ordered filtered_example_instances by id ('-' for reverse)
+updated_example_instances = redis_root.update(ExampleModel, ordered_instances, example_field='another_example_data') # - to update all ordered_instances example_field with value 'another_example_data' and get its data dict
+redis_root.delete(ExampleModel, updated_example_instances) # - to delete updated_example_instances
+
+# Non-blocking funcs are the same, just add "_nb" to the end:
+# ExampleModel(...).save_nb()
+# redis_root.create_nb(...)
+# redis_root.update_nb(...)
+# redis_root.delete_nb(...)
+
+```
 
 
 # Example usage
