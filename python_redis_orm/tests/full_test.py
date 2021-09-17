@@ -397,7 +397,7 @@ def use_keys_test(connection_pool, prefix):
             use_keys=True
         )
         started_in_keys = datetime.datetime.now()
-        tests_count = 100
+        tests_count = 1000
         for i in range(tests_count):
             task_challenge_1 = TaskChallenge(
                 redis_root=redis_root,
