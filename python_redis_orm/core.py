@@ -429,10 +429,16 @@ class RedisRoot:
         
         return sorted(instances, key=(lambda instance: instance[field_name]), reverse=reverse)
     
+    def get_wait_creating(self):
+        self.redis_instance.get(f'__creating__:{self.prefix}')
+    
+    def set_wait_creating(self, is_creating):
+        self.redis_instance.set(f'__creating__:{self.prefix}', is_creating)
+    
     def wait_creation(self):
-        while self.wait_creating:
+        while self.get_wait_creating():
             pass
-        self.wait_creating = True
+        self.set_wait_creating(True)
     
     def get_and_reserve_new_id(self, model):
         
@@ -454,7 +460,7 @@ class RedisRoot:
             new_id = really_new()
         else:
             new_id = self.creating[model][-1] + 1
-        self.wait_creating = False
+        self.set_wait_creating(False)
         return new_id
 
     
@@ -465,7 +471,7 @@ class RedisRoot:
             for some_instance_id in self.creating[model].copy()
             if some_instance_id != instance_id
         ]
-        self.wait_creating = False
+        self.set_wait_creating(False)
     
     ### GET ###
     
