@@ -430,10 +430,10 @@ class RedisRoot:
         return sorted(instances, key=(lambda instance: instance[field_name]), reverse=reverse)
     
     def get_wait_creating(self):
-        self.redis_instance.get(f'__creating__:{self.prefix}')
+        return bool(self.redis_instance.get(f'__creating__:{self.prefix}'))
     
     def set_wait_creating(self, is_creating):
-        self.redis_instance.set(f'__creating__:{self.prefix}', is_creating)
+        self.redis_instance.set(f'__creating__:{self.prefix}', int(is_creating))
     
     def wait_creation(self):
         while self.get_wait_creating():
