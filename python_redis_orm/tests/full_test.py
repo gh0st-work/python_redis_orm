@@ -4,6 +4,7 @@ from time import sleep
 import asyncio
 import os
 
+
 from python_redis_orm.core import *
 
 
@@ -95,7 +96,8 @@ def basic_test(connection_pool, prefix):
         redis_root.register_models([
             TaskChallenge,
         ])
-        for i in range(5):
+        count = 5
+        for i in range(count):
             TaskChallenge(
                 redis_root=redis_root,
                 status='in_work',
@@ -103,9 +105,9 @@ def basic_test(connection_pool, prefix):
         task_challenges_without_keys = redis_root.get(TaskChallenge)
         task_challenges_with_keys = redis_root.get(TaskChallenge, return_dict=True)
         have_exception = False
-        if not len(task_challenges_without_keys):
+        if not len(task_challenges_without_keys) == count:
             have_exception = True
-        if not task_challenges_with_keys:
+        if not len(task_challenges_with_keys) == count:
             have_exception = True
         else:
             if not task_challenges_with_keys.keys():

@@ -381,7 +381,7 @@ class RedisRoot:
         self.save_consistency = save_consistency
         self.use_keys = use_keys
         self.creating = {}
-        self.wait_creating = False
+        self.set_wait_creating(False)
     
     @property
     def redis_instance(self):
@@ -430,7 +430,7 @@ class RedisRoot:
         return sorted(instances, key=(lambda instance: instance[field_name]), reverse=reverse)
     
     def get_wait_creating(self):
-        return bool(self.redis_instance.get(f'__creating__:{self.prefix}'))
+        return bool(int(self.redis_instance.get(f'__creating__:{self.prefix}')))
     
     def set_wait_creating(self, is_creating):
         self.redis_instance.set(f'__creating__:{self.prefix}', int(is_creating))
@@ -452,7 +452,6 @@ class RedisRoot:
             new_id = int(max_id + 1)
             self.creating[model] = [new_id]
             return new_id
-        
         self.wait_creation()
         if model not in self.creating.keys():
             new_id = really_new()
@@ -1034,4 +1033,3 @@ class RedisModel:
             return meta
         else:
             raise Exception(f'{name} has no field {field_name}')
-
