@@ -636,7 +636,7 @@ class RedisRoot:
         if '__' in filter_param:
             filter_param_split = filter_param.split('__')
             if filter_param_split[-1] in ['exact', 'iexact', 'contains', 'icontains', 'in', 'gt', 'gte', 'lt', 'lte',
-                                          'startswith', 'istartswith', 'endswith', 'iendswith', 'range']:
+                                          'startswith', 'istartswith', 'endswith', 'iendswith', 'range', 'isnull']:
                 fields_to_filter = filter_param_split[:-1]
                 filter_type = filter_param_split[-1]
             else:
