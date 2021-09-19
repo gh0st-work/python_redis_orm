@@ -80,6 +80,14 @@ class ModelWithOverriddenSave(RedisModel):
         return super().save()
 
 
+class SomeAbstractModel(RedisModel):
+    abstract_field = RedisString(default='hello')
+
+
+class InheritanceTestModel(SomeAbstractModel):
+    some_field = RedisBool(default=True)
+
+
 def clean_db_after_test(connection_pool, prefix):
     redis_instance = redis.Redis(connection_pool=connection_pool)
     for key in redis_instance.keys(f'{prefix}:*'):
@@ -689,6 +697,28 @@ def save_override_test(connection_pool, prefix):
     return have_exception
 
 
+def inheritance_test(connection_pool, prefix):
+    redis_root = RedisRoot(
+        prefix=prefix,
+        connection_pool=connection_pool,
+        ignore_deserialization_errors=True,
+    )
+    have_exception = False
+    try:
+        instance_1 = redis_root.create(InheritanceTestModel)
+        instance_2 = redis_root.create(InheritanceTestModel, abstract_field='nice')
+        instance_1 = redis_root.get(InheritanceTestModel, abstract_field='hello')
+        instance_2 = redis_root.get(InheritanceTestModel, abstract_field='nice')
+        if not instance_1 or not instance_2:
+            have_exception = True
+    except BaseException as ex:
+        print(ex)
+        have_exception = True
+    
+    clean_db_after_test(connection_pool, prefix)
+    return have_exception
+
+
 def performance_test(connection_pool, prefix):
     have_exception = False
     try:
@@ -816,6 +846,7 @@ def run_tests():
         foreign_key_test,
         many_to_many_test,
         save_override_test,
+        inheritance_test,
         performance_test,
     ]
     results = []

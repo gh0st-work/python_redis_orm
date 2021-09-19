@@ -6,7 +6,7 @@ from copy import deepcopy
 import pytz
 import redis
 
-from python_redis_orm.utils import check_types, get_ids_from_untyped_data, check_callable, attr_is_real
+from python_redis_orm.utils import check_types, get_ids_from_untyped_data, check_callable
 
 
 ### FIELDS ###
@@ -358,6 +358,7 @@ class RedisRoot:
         ignore_deserialization_errors=True,
         save_consistency=False,
         use_keys=True,
+        stable_non_blocking=True,
     ):
         connection_pool = check_callable(connection_pool)
         prefix = check_callable(prefix)
@@ -367,6 +368,7 @@ class RedisRoot:
         check_types(ignore_deserialization_errors, bool)
         check_types(save_consistency, bool)
         check_types(use_keys, bool)
+        check_types(stable_non_blocking, bool)
         self.registered_models = []
         self.registered_django_models = {}
         prefix = check_callable(prefix)
@@ -381,6 +383,7 @@ class RedisRoot:
         self.save_consistency = save_consistency
         self.use_keys = use_keys
         self.creating = {}
+        self.stable_non_blocking = stable_non_blocking
         self.set_wait_creating(False)
     
     @property
@@ -411,6 +414,7 @@ class RedisRoot:
                     f'Default config ({default_host}:{default_port}, db={default_db}) failed, please provide connection_pool to {self.__class__.__name__}')
         return self.connection_pool
     
+    
     ### UTILS ###
     
     def register_models(self, models_list):
@@ -430,10 +434,16 @@ class RedisRoot:
         return sorted(instances, key=(lambda instance: instance[field_name]), reverse=reverse)
     
     def get_wait_creating(self):
-        return bool(int(self.redis_instance.get(f'__creating__:{self.prefix}')))
+        if self.stable_non_blocking:
+            return bool(int(self.redis_instance.get(f'__creating__:{self.prefix}')))
+        else:
+            return self.creating
     
     def set_wait_creating(self, is_creating):
-        self.redis_instance.set(f'__creating__:{self.prefix}', int(is_creating))
+        if self.stable_non_blocking:
+            self.redis_instance.set(f'__creating__:{self.prefix}', int(is_creating))
+        else:
+            self.creating = is_creating
     
     def wait_creation(self):
         while self.get_wait_creating():
@@ -452,6 +462,7 @@ class RedisRoot:
             new_id = int(max_id + 1)
             self.creating[model] = [new_id]
             return new_id
+        
         self.wait_creation()
         if model not in self.creating.keys():
             new_id = really_new()
@@ -461,7 +472,6 @@ class RedisRoot:
             new_id = self.creating[model][-1] + 1
         self.set_wait_creating(False)
         return new_id
-
     
     def remove_creating(self, model, instance_id):
         self.wait_creation()
@@ -519,28 +529,22 @@ class RedisRoot:
     
     def _check_fields_existence(self, model, instances_with_allowed, filters):
         checked_instances = {}
-        fields = model.__dict__
-        cleaned_fields = {}
-        for field_name, field in fields.items():
-            if attr_is_real(field_name, field):
-                cleaned_fields[field_name] = field
-        if 'id' not in cleaned_fields.keys():
-            cleaned_fields['id'] = RedisString(null=True)
-        fields = cleaned_fields
+        fields = model.get_class_fields()
+        if 'id' not in fields.keys():
+            fields['id'] = RedisString(null=True)
         for instance_id, instance_fields in instances_with_allowed.items():
             checked_instances[instance_id] = {}
             for field_name, field in fields.items():
-                if attr_is_real(field_name, field):
-                    if field_name in instance_fields.keys():
-                        checked_instances[instance_id][field_name] = instance_fields[field_name]
-                    else:
-                        field.value = None
-                        cleaned_value = field.clean()
-                        allowed = self._filter_field_name(field_name, cleaned_value, filters)
-                        checked_instances[instance_id][field_name] = {
-                            'value': cleaned_value,
-                            'allowed': allowed
-                        }
+                if field_name in instance_fields.keys():
+                    checked_instances[instance_id][field_name] = instance_fields[field_name]
+                else:
+                    field.value = None
+                    cleaned_value = field.clean()
+                    allowed = self._filter_field_name(field_name, cleaned_value, filters)
+                    checked_instances[instance_id][field_name] = {
+                        'value': cleaned_value,
+                        'allowed': allowed
+                    }
         return checked_instances
     
     def _get_instances_from_instances_with_allowed(self, instances_with_allowed):
@@ -777,7 +781,7 @@ class RedisRoot:
     def _update_confirm(self, model, instance_key, renew_ttl, new_ttl, fields_to_write):
         ttl = None
         if renew_ttl:
-            ttl = model.get_model_ttl()
+            ttl = model.get_instance_ttl()
         elif new_ttl:
             ttl = new_ttl
         fields_to_write_json = json.dumps(fields_to_write)
@@ -786,7 +790,7 @@ class RedisRoot:
     async def _update_confirm_async(self, model, instance_key, renew_ttl, new_ttl, fields_to_write):
         ttl = None
         if renew_ttl:
-            ttl = model.get_model_ttl()
+            ttl = model.get_instance_ttl()
         elif new_ttl:
             ttl = new_ttl
         fields_to_write_json = json.dumps(fields_to_write)
@@ -833,12 +837,11 @@ class RedisRoot:
         return redis_instance
     
     def _get_allowed_model_params(self, model, params):
-        model_attrs = model.__dict__
+        model_attrs = model.get_class_fields()
         allowed_params = {}
         for param_name in params.keys():
             if param_name in model_attrs.keys():
-                if attr_is_real(param_name, model_attrs[param_name]):
-                    allowed_params[param_name] = params[param_name]
+                allowed_params[param_name] = params[param_name]
         return allowed_params
     
     ### HELPERS ###
@@ -894,15 +897,32 @@ class RedisModel:
             raise Exception(f'{redis_root.__name__} type is {type(redis_root)}. Allowed only RedisRoot')
     
     def _renew_fields(self):
-        class_fields = self.__class__.__dict__.copy()
+        class_fields = self.__class__.get_class_fields()
         fields = {}
         for field_name, field in class_fields.items():
-            if attr_is_real(field_name, field):
-                if field_name == 'Meta':
-                    self._set_meta(self.__class__.Meta.__dict__)
-                else:
-                    fields[field_name] = self._get_initial_model_field(field_name)
+            fields[field_name] = self._get_initial_model_field(field_name)
+        self._set_meta(self.__class__.get_class_meta())
         self.__model_data__['fields'] = fields
+    
+    @classmethod
+    def get_class_fields(cls):
+        field_names = dir(cls)
+        fields = {}
+        for field_name in field_names:
+            field_value = getattr(cls, field_name)
+            if isinstance(field_value, RedisField):
+                fields[field_name] = field_value
+        return fields
+    
+    @classmethod
+    def get_class_meta(cls):
+        field_names = dir(cls)
+        meta_fields = {}
+        if 'Meta' in field_names:
+            meta = cls.Meta
+            meta_field_names = dir(meta)
+            meta_fields = {meta_param_name: getattr(meta, meta_param_name) for meta_param_name in meta_field_names}
+        return meta_fields
     
     def _set_meta(self, meta_fields):
         allowed_meta_fields_with_check_functions = {
@@ -920,8 +940,8 @@ class RedisModel:
     
     def _get_initial_model_field(self, field_name):
         name = self.get('name')
-        if field_name in self.__class__.__dict__.keys():
-            return deepcopy(self.__class__.__dict__[field_name])
+        if field_name in dir(self.__class__):
+            return deepcopy(getattr(self.__class__, field_name))
         else:
             raise Exception(f'{name} has no field {field_name}')
     
@@ -958,22 +978,21 @@ class RedisModel:
         deserialized_fields = {}
         cleaned_fields = {}
         for field_name, field in fields.items():
-            if attr_is_real(field_name, field):
-                try:
-                    cleaned_value = field.clean()
-                    cleaned_fields[field_name] = cleaned_value
-                    deserialized_value = redis_root.deserialize_value(cleaned_value, name, field_name)
-                    deserialized_fields[field_name] = deserialized_value
-                except BaseException as ex:
-                    raise Exception(f'{ex} ({name} -> {field_name})')
+            try:
+                cleaned_value = field.clean()
+                cleaned_fields[field_name] = cleaned_value
+                deserialized_value = redis_root.deserialize_value(cleaned_value, name, field_name)
+                deserialized_fields[field_name] = deserialized_value
+            except BaseException as ex:
+                raise Exception(f'{ex} ({name} -> {field_name})')
         return instance_key, cleaned_fields, deserialized_fields
     
     def _get_and_reserve_new_id(self):
         redis_root = self.get('redis_root')
         self.id.value = redis_root.get_and_reserve_new_id(self.__class__)
-
+    
     def _set_fields(self, instance_key, fields_dict):
-        model_ttl = self.get_model_ttl()
+        model_ttl = self.get_instance_ttl()
         redis_root = self.get('redis_root')
         prefix, model_name, instance_id = instance_key.split(':')
         instance_id = int(instance_id)
@@ -985,7 +1004,7 @@ class RedisModel:
     async def _set_field_async(self, instance_key, fields_dict):
         self._set_fields(instance_key, fields_dict)
     
-    def get_model_ttl(self):
+    def get_instance_ttl(self):
         ttl = None
         meta = self.get('meta')
         if 'ttl' in meta.keys():
@@ -1033,3 +1052,5 @@ class RedisModel:
             return meta
         else:
             raise Exception(f'{name} has no field {field_name}')
+
+
