@@ -333,7 +333,7 @@ class RedisManyToMany(RedisList):
         if value not in ['null', None]:
             value = super().deserialize_value(value, redis_root)
             instances_ids = value
-            instances = redis_root.get(self.model, id_in=instances_ids)
+            instances = redis_root.get(self.model, id__in=instances_ids)
             value = instances
         
         return value
