@@ -5,7 +5,7 @@ import asyncio
 import os
 
 
-# from python_redis_orm.core import *
+from python_redis_orm.core import *
 
 
 def generate_token(chars_count):
