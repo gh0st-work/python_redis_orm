@@ -5,7 +5,7 @@ import asyncio
 import os
 
 
-from python_redis_orm.core import *
+# from python_redis_orm.core import *
 
 
 def generate_token(chars_count):
@@ -37,17 +37,6 @@ class TaskChallenge(RedisModel):
     }, null=False)
     account_checks_count = RedisNumber(default=0)
     created = RedisDateTime(default=datetime.datetime.now)
-
-
-class TtlCheckModel(RedisModel):
-    redis_number_with_ttl = RedisNumber(default=0, null=False)
-
-
-class MetaTtlCheckModel(RedisModel):
-    redis_number = RedisNumber(default=0, null=False)
-    
-    class Meta:
-        ttl = 5
 
 
 class DictCheckModel(RedisModel):
@@ -125,6 +114,7 @@ def basic_test(connection_pool, prefix):
                     have_exception = True
     except BaseException as ex:
         have_exception = True
+        print(ex)
     clean_db_after_test(connection_pool, prefix)
     return have_exception
 
@@ -231,12 +221,12 @@ def filter_test(connection_pool, prefix):
             BotSession(redis_root, session_token=same_token).save()
         for random_token in random_tokens:
             BotSession(redis_root, session_token=random_token).save()
-        task_challenges_with_same_token = redis_root.get(BotSession, session_token=same_token)
+        yesterday = datetime.datetime.now() - datetime.timedelta(days=1)
+        task_challenges_with_same_token = redis_root.get(BotSession, session_token=same_token, created__gte=yesterday)
         if len(task_challenges_with_same_token) == same_tokens_count:
             have_exception = False
     except BaseException as ex:
         print(ex)
-    
     clean_db_after_test(connection_pool, prefix)
     return have_exception
 
@@ -334,61 +324,6 @@ def delete_test(connection_pool, prefix):
         task_challenges = redis_root.get(TaskChallenge)
         if len(bot_sessions) == 0 and len(task_challenges) == 0:
             have_exception = False
-    except BaseException as ex:
-        print(ex)
-    
-    clean_db_after_test(connection_pool, prefix)
-    return have_exception
-
-
-def save_consistency_test(connection_pool, prefix):
-    redis_root = RedisRoot(
-        prefix=prefix,
-        connection_pool=connection_pool,
-        ignore_deserialization_errors=True,
-        save_consistency=True,
-    )
-    have_exception = True
-    try:
-        ttl_check_model_1 = TtlCheckModel(
-            redis_root=redis_root,
-        ).save()
-        ttl_check_models = redis_root.get(TtlCheckModel)
-        if len(ttl_check_models):
-            ttl_check_model = ttl_check_models[0]
-            if 'redis_number_with_ttl' in ttl_check_model.keys():
-                sleep(6)
-                ttl_check_models = redis_root.get(TtlCheckModel)
-                if len(ttl_check_models):
-                    ttl_check_model = ttl_check_models[0]
-                    if 'redis_number_with_ttl' in ttl_check_model.keys():  # because consistency is saved
-                        have_exception = False
-    except BaseException as ex:
-        print(ex)
-    
-    clean_db_after_test(connection_pool, prefix)
-    return have_exception
-
-
-def meta_ttl_test(connection_pool, prefix):
-    redis_root = RedisRoot(
-        prefix=prefix,
-        connection_pool=connection_pool,
-        ignore_deserialization_errors=True,
-    )
-    have_exception = True
-    try:
-        meta_ttl_check_model_1 = MetaTtlCheckModel(
-            redis_root=redis_root,
-        ).save()
-        meta_ttl_check_models = redis_root.get(MetaTtlCheckModel)
-        if len(meta_ttl_check_models):
-            meta_ttl_check_model = meta_ttl_check_models[0]
-            if 'redis_number' in meta_ttl_check_model.keys():
-                sleep(6)
-                meta_ttl_check_models = redis_root.get(MetaTtlCheckModel)
-                if not len(meta_ttl_check_models):
-                    have_exception = False
     except BaseException as ex:
         print(ex)
     
@@ -721,6 +656,7 @@ def inheritance_test(connection_pool, prefix):
 
 def performance_test(connection_pool, prefix):
     have_exception = False
+    
     try:
         
         def run_test(count, model):
@@ -819,6 +755,28 @@ def performance_test(connection_pool, prefix):
     return have_exception
 
 
+def filter_performace_test(connection_pool, prefix):
+    have_exception = False
+    redis_root = RedisRoot(
+        prefix=prefix,
+        connection_pool=connection_pool,
+        ignore_deserialization_errors=True,
+        use_keys=True
+    )
+    time_start = datetime.datetime.now()
+    for i in range(100):
+        task_challenges_qs = redis_root.create(TaskChallenge, account_checks_count=i)
+    time_end = datetime.datetime.now()
+    print((time_end - time_start).total_seconds())
+    time_start = datetime.datetime.now()
+    for i in range(100):
+        task_challenges_qs = redis_root.get(TaskChallenge, account_checks_count=i)
+    time_end = datetime.datetime.now()
+    print((time_end - time_start).total_seconds())
+    
+    return have_exception
+
+
 def run_tests():
     connection_pool = redis.ConnectionPool(
         host=os.environ['REDIS_HOST'],
@@ -837,8 +795,6 @@ def run_tests():
         redis_foreign_key_test,
         update_test,
         delete_test,
-        save_consistency_test,
-        meta_ttl_test,
         use_keys_test,
         list_test,
         dict_test,
@@ -848,6 +804,7 @@ def run_tests():
         save_override_test,
         inheritance_test,
         performance_test,
+        filter_performace_test,
     ]
     results = []
     started_in = datetime.datetime.now()
