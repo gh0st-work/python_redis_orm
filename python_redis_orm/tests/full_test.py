@@ -202,8 +202,6 @@ def order_test(connection_pool, prefix):
         task_challenges = redis_root.get(TaskChallenge)
         first_task_challenge = redis_root.order(task_challenges, 'id')[0]
         last_task_challenge = redis_root.order(task_challenges, '-id')[0]
-        print(first_task_challenge['id'])
-        print(last_task_challenge['id'])
         if first_task_challenge['id'] == 1 and last_task_challenge['id'] == len(task_challenges):
             have_exception = False
     except BaseException as ex:
@@ -563,7 +561,6 @@ def foreign_key_test(connection_pool, prefix):
             ForeignKeyCheckModel,
             task_challenge=task_challenge
         )
-        print(foreign_key_check_instance)
         # Check really created
         task_challenge_qs = redis_root.get(TaskChallenge, task_id=task_id)
         if len(task_challenge_qs) != 1:
@@ -571,12 +568,10 @@ def foreign_key_test(connection_pool, prefix):
         else:
             task_challenge = task_challenge_qs[0]
             foreign_key_check_instance_qs = redis_root.get(ForeignKeyCheckModel, task_challenge=task_challenge)
-            print(foreign_key_check_instance_qs)
             if len(foreign_key_check_instance_qs) != 1:
                 have_exception = True
             else:
                 foreign_key_check_instance = foreign_key_check_instance_qs[0]
-                print(foreign_key_check_instance['task_challenge']['task_id'])
                 if foreign_key_check_instance['task_challenge']['task_id'] != task_id:
                     have_exception = True
     except BaseException as ex:
@@ -676,94 +671,95 @@ def performance_test(connection_pool, prefix):
     
     try:
         
-        def run_test(count, model):
+        def run_test(count):
             
-            def test(count, model, **test_params):
-                real_test_params = {
-                    'use_keys': True,
-                    'use_non_blocking': True
-                }
-                for key in real_test_params.copy():
-                    if key in test_params.keys():
-                        real_test_params[key] = test_params[key]
+            def test(count, **test_params):
+                real_test_params = test_params
                 
-                def create_instances(redis_root, count, use_non_blocking, model):
+                def run_exact_test(redis_root, count, use_non_blocking):
                     
+                    update_data = [
+                        redis_root.create(TaskChallenge, account_checks_count=100)
+                        for i in range(count)
+                    ]
+                    
+                    started_in = datetime.datetime.now()
                     if use_non_blocking:
-                        started_in = datetime.datetime.now()
-                        results = [
-                            redis_root.create_nb(model)
+                        
+                        create_results = [
+                            redis_root.create_nb(TaskChallenge)
                             for i in range(count)
                         ]
-                        ended_in = datetime.datetime.now()
+                        update_results = [
+                            redis_root.update_nb(TaskChallenge, update_data, account_checks_count=200)
+                            for i in range(count)
+                        ]
                     else:
-                        started_in = datetime.datetime.now()
-                        results = [
-                            redis_root.create(model)
+                        create_results = [
+                            redis_root.create(TaskChallenge)
                             for i in range(count)
                         ]
-                        ended_in = datetime.datetime.now()
+                        update_results = [
+                            redis_root.update(TaskChallenge, update_data, account_checks_count=200)
+                            for i in range(count)
+                        ]
+                    ended_in = datetime.datetime.now()
                     
                     time_took = (ended_in - started_in).total_seconds()
                     fields_count = len(results[0].keys()) * count
                     clean_db_after_test(connection_pool, prefix)
                     return [time_took, count, fields_count]
                 
+                print(prefix)
                 redis_root = RedisRoot(
                     prefix=prefix,
                     connection_pool=connection_pool,
                     ignore_deserialization_errors=True,
-                    use_keys=real_test_params['use_keys']
+                    use_keys=real_test_params['use_keys'],
+                    solo_usage=real_test_params['solo_usage'],
+                    save_type=('fields' if real_test_params['use_fields'] else 'instances'),
                 )
                 
-                test_result = create_instances(redis_root, count, real_test_params['use_non_blocking'], model)
+                test_result = run_exact_test(redis_root, count, real_test_params['use_non_blocking'])
                 
                 return test_result
             
-            test_confs = [
-                {
-                    'use_keys': False,
-                    'use_non_blocking': False,
-                },
-                {
-                    'use_keys': False,
-                    'use_non_blocking': True,
-                },
-                {
-                    'use_keys': True,
-                    'use_non_blocking': False,
-                },
-                {
-                    'use_keys': True,
-                    'use_non_blocking': True,
-                },
+            test_confs = []
             
-            ]
+            for use_keys_variant in [True, False]:
+                for use_non_blocking_variant in [True, False]:
+                    for solo_usage_variant in [True, False]:
+                        for use_fields_variant in [True, False]:
+                            test_confs.append({
+                                'use_keys': use_keys_variant,
+                                'use_non_blocking': use_non_blocking_variant,
+                                'solo_usage': solo_usage_variant,
+                                'use_fields': use_fields_variant,
+                            })
             
             test_confs_results = [
-                test(count, model, **test_conf)
+                test(count, **test_conf)
                 for test_conf in test_confs
             ]
             
             print(f'\n\n\n'
-                  f'Performance test results on your machine:\n'
-                  f'Every test creates {test_confs_results[0][1]} instances ({test_confs_results[0][2]} fields) of {model.__name__} model,\n'
-                  f'Here is the results:\n'
+                  f'The performance test results on your machine:\n'
+                  f'Every test creates and updates {test_confs_results[0][1]} instances ({test_confs_results[0][2]} fields) of TaskChallenge model,\n'
+                  f'Here are the results:\n'
                   f'\n')
             
             min_time = min(list(map(lambda result: result[0], test_confs_results)))
             min_conf_text = ''
             for i, test_confs_result in enumerate(test_confs_results):
                 test_conf_text = ", ".join([f"{k} = {v}" for k, v in test_confs[i].items()])
-                print(f'Configuration: {test_conf_text} took {test_confs_result[0]}s')
+                print(f'The configuration: {test_conf_text} took {test_confs_result[0]}s')
                 if test_confs_result[0] == min_time:
                     min_conf_text = test_conf_text
             print(f'\n\n'
                   f'The best configuration: {min_conf_text}\n')
         
         count = 1000
-        model = TaskChallenge
-        run_test(count, model)
+        run_test(count)
     except BaseException as ex:
         print(ex)
         have_exception = True
@@ -772,7 +768,7 @@ def performance_test(connection_pool, prefix):
     return have_exception
 
 
-def filter_performace_test(connection_pool, prefix):
+def flood_performance_test(connection_pool, prefix):
     have_exception = False
     redis_root = RedisRoot(
         prefix=prefix,
@@ -781,26 +777,32 @@ def filter_performace_test(connection_pool, prefix):
         use_keys=True
     )
     clean_db_after_test(connection_pool, prefix)
-    execs_count = 11
+    execs_count = 6
     count = 100
-    completion_time_list = []
-    for exec in range(execs_count):
-        time_start = datetime.datetime.now()
-        for i in range(100):
-            task_challenges_qs = redis_root.create(TaskChallenge, account_checks_count=i)
-        # time_end = datetime.datetime.now()
-        # print((time_end - time_start).total_seconds())
-        # time_start = datetime.datetime.now()
-        for i in range(100):
-            task_challenges_qs = redis_root.get(TaskChallenge, account_checks_count=i)
-        time_end = datetime.datetime.now()
-        completion_time_list.append((time_end - time_start).total_seconds())
-    first_test = completion_time_list[0]
-    last_test = completion_time_list[-1]
-    print(f'0 stored instances -> {(execs_count - 1) * count} stored instances changes time like:\n'
-          f'{"s -> ".join((str(completion_time) for completion_time in completion_time_list))}s\n'
-          f'+{(last_test / first_test - 1) * 100}% of time spent')
-    clean_db_after_test(connection_pool, prefix)
+    
+    def run_flood_test(use_fields):
+        clean_db_after_test(connection_pool, prefix)
+        completion_time_list = []
+        for exec in range(execs_count):
+            time_start = datetime.datetime.now()
+            for i in range(count):
+                task_challenges_qs = redis_root.create(TaskChallenge, account_checks_count=i)
+            for i in range(count):
+                task_challenges_qs = redis_root.get(TaskChallenge, account_checks_count=i)
+            time_end = datetime.datetime.now()
+            completion_time_list.append((time_end - time_start).total_seconds())
+        first_test = completion_time_list[0]
+        last_test = completion_time_list[-1]
+        print(f'\n'
+              f'Use fields: {use_fields}\n'
+              f'0 -> {(execs_count - 1) * count} stored instances changes execution time like:\n'
+              f'{"s -> ".join((str(completion_time) for completion_time in completion_time_list))}s\n'
+              f'+{(last_test / first_test - 1) * 100}% of time spent')
+        clean_db_after_test(connection_pool, prefix)
+    
+    print('Running test, that floods your redis database and checking create and filter time...')
+    run_flood_test(True)
+    run_flood_test(False)
     return have_exception
 
 
@@ -831,7 +833,7 @@ def run_tests():
         save_override_test,
         inheritance_test,
         performance_test,
-        filter_performace_test,
+        flood_performance_test,
     ]
     results = []
     started_in = datetime.datetime.now()
