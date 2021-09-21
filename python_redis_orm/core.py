@@ -76,6 +76,7 @@ class RedisString(RedisField):
     
     def deserialize_value(self, value, redis_root):
         self.deserialize_value_check_null(value, redis_root)
+        value = super().deserialize_value(value, redis_root)
         if value not in ['null', None]:
             value = f'{value}'
         else:
@@ -94,6 +95,7 @@ class RedisNumber(RedisField):
     def deserialize_value(self, value, redis_root):
         self.deserialize_value_check_null(value, redis_root)
         if value not in ['null', None]:
+            value = super().deserialize_value(value, redis_root)
             if type(value) == str:
                 if '.' in value:
                     value = float(value)
@@ -129,6 +131,7 @@ class RedisBool(RedisNumber):
     def deserialize_value(self, value, redis_root):
         self.deserialize_value_check_null(value, redis_root)
         if value not in ['null', None]:
+            value = super().deserialize_value(value, redis_root)
             check_types(value, int)
             value = bool(value)
         return value
@@ -145,6 +148,7 @@ class RedisDecimal(RedisString):
     def deserialize_value(self, value, redis_root):
         self.deserialize_value_check_null(value, redis_root)
         if value not in ['null', None]:
+            value = super().deserialize_value(value, redis_root)
             value = decimal.Decimal(value)
         else:
             value = None
@@ -172,6 +176,7 @@ class RedisJson(RedisField):
     def deserialize_value(self, value, redis_root):
         self.deserialize_value_check_null(value, redis_root)
         if value not in ['null', None]:
+            value = super().deserialize_value(value, redis_root)
             check_types(value, str)
             value = json.loads(value)
             check_types(value, self.json_allowed_types)
@@ -293,6 +298,7 @@ class RedisForeignKey(RedisNumber):
     def deserialize_value(self, value, redis_root):
         self.deserialize_value_check_null(value, redis_root)
         if value not in ['null', None]:
+            value = super().deserialize_value(value, redis_root)
             check_types(value, int)
             instance_id = value
             instance_qs = redis_root.get(self.model, return_dict=True, id=instance_id)
@@ -353,7 +359,7 @@ class RedisRoot:
         ignore_deserialization_errors=True,
         save_consistency=False,
         use_keys=True,
-        stable_non_blocking=True,
+        solo_usage=True,
     ):
         connection_pool = check_callable(connection_pool)
         prefix = check_callable(prefix)
@@ -363,7 +369,7 @@ class RedisRoot:
         check_types(ignore_deserialization_errors, bool)
         check_types(save_consistency, bool)
         check_types(use_keys, bool)
-        check_types(stable_non_blocking, bool)
+        check_types(solo_usage, bool)
         self.registered_models = []
         self.registered_django_models = {}
         prefix = check_callable(prefix)
@@ -378,7 +384,8 @@ class RedisRoot:
         self.save_consistency = save_consistency
         self.use_keys = use_keys
         self.creating = {}
-        self.stable_non_blocking = stable_non_blocking
+        self.solo_usage = solo_usage
+        self.max_models_ids = {}
         self.set_wait_creating(False)
     
     @property
@@ -419,6 +426,7 @@ class RedisRoot:
                     self.registered_models.append(model)
             else:
                 raise Exception(f'{model.__name__} class is not RedisModel')
+        
     
     def order(self, instances, field_name):
         reverse = False
@@ -429,16 +437,16 @@ class RedisRoot:
         return sorted(instances, key=(lambda instance: instance[field_name]), reverse=reverse)
     
     def get_wait_creating(self):
-        if self.stable_non_blocking:
-            return bool(int(self.redis_instance.get(f'__creating__:{self.prefix}')))
-        else:
+        if self.solo_usage:
             return self.is_creating
+        else:
+            return bool(int(self.redis_instance.get(f'__creating__:{self.prefix}')))
     
     def set_wait_creating(self, is_creating):
-        if self.stable_non_blocking:
-            self.redis_instance.set(f'__creating__:{self.prefix}', int(is_creating))
-        else:
+        if self.solo_usage:
             self.is_creating = is_creating
+        else:
+            self.redis_instance.set(f'__creating__:{self.prefix}', int(is_creating))
     
     def wait_creation(self):
         while self.get_wait_creating():
@@ -448,13 +456,7 @@ class RedisRoot:
     def get_and_reserve_new_id(self, model):
         
         def really_new():
-            instances_with_ids = self.get(model, return_dict=True)
-            all_ids = [int(instance_id) for instance_id in list(instances_with_ids.keys())]
-            if all_ids:
-                max_id = max(all_ids)
-            else:
-                max_id = 0
-            new_id = int(max_id + 1)
+            new_id = self._get_model_new_id(model)
             self.creating[model] = [new_id]
             return new_id
         
@@ -470,11 +472,7 @@ class RedisRoot:
     
     def remove_creating(self, model, instance_id):
         self.wait_creation()
-        self.creating[model] = [
-            some_instance_id
-            for some_instance_id in self.creating[model].copy()
-            if some_instance_id != instance_id
-        ]
+        self.creating[model] = list(filter(lambda some_instance_id: some_instance_id != instance_id, self.creating[model].copy()))
         self.set_wait_creating(False)
     
     ### GET ###
@@ -492,13 +490,17 @@ class RedisRoot:
         return instances
     
     def _get_stored_model_instances(self, model, filters):
-        model_name = model.__name__
         if not filters:
             instances = self._get_instances_data_by_ids(model)
         else:
+            # print()
+            # print(filters)
             cleaned_filters = self._clean_filters(model, filters)
+            # print(cleaned_filters)
             cleaned_filters_with_filtered_ids = self._get_cleaned_filters_with_filtered_ids(cleaned_filters)
+            # print(cleaned_filters_with_filtered_ids)
             starting_model_filtered_ids = self._get_starting_model_filtered_ids(cleaned_filters_with_filtered_ids)
+            # print(starting_model_filtered_ids)
             instances = self._get_instances_data_by_ids(model, starting_model_filtered_ids)
         return instances
     
@@ -509,10 +511,10 @@ class RedisRoot:
             raw_instances_data = self.fast_get_keys_values(f'{self.prefix}:{model_name}:*')
             for raw_instance_key, raw_instance_value in raw_instances_data.items():
                 instance_id = int(raw_instance_key.split(':')[-2])
-                instnace_field_name = raw_instance_key.split(':')[-1]
+                instance_field_name = raw_instance_key.split(':')[-1]
                 if instance_id not in instances_data.keys():
                     instances_data[instance_id] = {}
-                instances_data[instance_id][instnace_field_name] = raw_instance_value
+                instances_data[instance_id][instance_field_name] = raw_instance_value
         else:
             for instance_id in ids:
                 raw_fields_data = self.fast_get_keys_values(f'{self.prefix}:{model_name}:{instance_id}:*')
@@ -529,9 +531,27 @@ class RedisRoot:
         }
         return instances_data
     
+    def _get_model_new_id(self, model):
+        if self.solo_usage:
+            if model not in self.max_models_ids.keys():
+                self.max_models_ids[model] = 0
+            max_id = self.max_models_ids[model]
+            new_id = max_id + 1
+            self.max_models_ids[model] = new_id
+        else:
+            stored_max_id = self.redis_instance.get(f'max_id:{self.prefix}:{model.__name__}')
+            max_id = 0
+            if stored_max_id:
+                max_id = int(stored_max_id)
+            new_id = max_id + 1
+            self.redis_instance.set(f'max_id:{self.prefix}:{model.__name__}', new_id)
+        return new_id
+        
+        
     def _get_instances_by_key(self, key):
         raw_instances = self.fast_get_keys_values(key)
         instances = {}
+        
         for instance_key, fields_json in raw_instances.items():
             prefix, model_name, instance_id = instance_key.split(':')
             instance_id = int(instance_id)
@@ -570,10 +590,9 @@ class RedisRoot:
         found = False
         model = None
         for registered_model in self.registered_models:
-            if registered_model.__name__ == model_name:
+            if registered_model.__name__ == model_name and not found:
                 found = True
                 model = registered_model
-                break
         if not found:
             if self.ignore_deserialization_errors:
                 print(f'{datetime.datetime.now()} - {model_name} not found in registered models, ignoring')
@@ -584,10 +603,7 @@ class RedisRoot:
     
     def _get_field_instance_by_name(self, model, field_name):
         try:
-            if field_name == 'id':
-                field_instance = getattr(model, field_name)
-            else:
-                field_instance = getattr(model, field_name)
+            field_instance = getattr(model, field_name)
         except BaseException as ex:
             if self.ignore_deserialization_errors:
                 print(
@@ -598,7 +614,6 @@ class RedisRoot:
         return field_instance
     
     def _deserialize_value_by_field_instance(self, field_instance, raw_value):
-        
         try:
             value = field_instance.deserialize_value(raw_value, self)
         except BaseException as ex:
@@ -622,8 +637,19 @@ class RedisRoot:
                 filtering_model_fields = filtering_models[-1].get_class_fields()
                 field = filtering_model_fields[field_to_filter_name]
                 if field.__class__ in [RedisForeignKey, RedisManyToMany]:
-                    filtering_models.append(field.model)
                     filtering_field_names.append(field_to_filter_name)
+                    if field_to_filter_names.index(field_to_filter_name) == len(field_to_filter_names) - 1:
+                        key = json.dumps({
+                            'field_names': filtering_field_names,
+                            'model_names': [model.__name__ for model in filtering_models]
+                        })
+                        if key not in cleaned_filters.keys():
+                            cleaned_filters[key] = {}
+                        if 'id' not in cleaned_filters[key].keys():
+                            cleaned_filters[key]['id'] = {}
+                        cleaned_filters[key]['id']['in'] = get_ids_from_untyped_data(filter_value)
+                    else:
+                        filtering_models.append(field.model)
                 else:
                     key = json.dumps({
                         'field_names': filtering_field_names,
@@ -634,6 +660,7 @@ class RedisRoot:
                     if field_to_filter_name not in cleaned_filters[key].keys():
                         cleaned_filters[key][field_to_filter_name] = {}
                     cleaned_filters[key][field_to_filter_name][filter_type] = filter_value
+            
         return cleaned_filters
     
     def _split_filtering(self, filter_param):
@@ -663,16 +690,16 @@ class RedisRoot:
                 field_filtered_ids = []
                 for instance_key, instance_value in stored_data.items():
                     value = self._deserialize_instance_field(model, field_name, instance_value)
-                    allowed = [
+                    allowed = (
                         self._filter_value(value, filter_type, filter_by)
                         for filter_type, filter_by in filters.items()
-                    ]
+                    )
                     if all(allowed):
                         field_filtered_ids.append(int(instance_key.split(':')[-2]))
                 filtered_ids.append(field_filtered_ids)
             if filtered_ids:
                 filtered_ids = list(reduce(
-                    lambda a, b: set(a & b),
+                    lambda a, b: set(a) & set(b),
                     filtered_ids
                 ))
             cleaned_filters_with_filtered_ids[relations_data] = filtered_ids
@@ -681,6 +708,8 @@ class RedisRoot:
 
     def _filter_value(self, value, filter_type, filter_by):
         allowed = True
+        if isinstance(filter_by, datetime.datetime):
+            filter_by = filter_by.replace(tzinfo=pytz.UTC)
         if filter_type == 'exact':
             if value != filter_by:
                 allowed = False
@@ -732,10 +761,10 @@ class RedisRoot:
         starting_filtered_ids = []
         for relations_data, filtered_ids in cleaned_filters_with_filtered_ids.items():
             allowed_ids = filtered_ids.copy()
-            real_relations_data_copy = json.loads(relations_data)
-            while real_relations_data_copy['field_names']:
-                field_name = real_relations_data_copy['field_names'].pop(-1)
-                model_name = real_relations_data_copy['model_name'].pop(-1)
+            real_relations_data = json.loads(relations_data)
+            while real_relations_data['field_names']:
+                field_name = real_relations_data['field_names'].pop(-1)
+                model_name = real_relations_data['model_names'].pop(-1)
                 all_stored_model_fields = self.fast_get_keys_values(f'{self.prefix}:{model_name}:*:{field_name}')
                 allowed_ids = [
                     int(instance_key.split(':')[-2])
@@ -744,10 +773,10 @@ class RedisRoot:
                 ]
             starting_filtered_ids.append(allowed_ids)
         if starting_filtered_ids:
-            starting_filtered_ids = list(reduce(
-                lambda set_a, set_b: set((set_a & set_b)),
+            starting_filtered_ids = sorted(list(reduce(
+                lambda set_a, set_b: set(set(set_a) & set(set_b)),
                 starting_filtered_ids.copy()
-            ))
+            )))
         return starting_filtered_ids
         
     ### UPDATE ###
@@ -929,10 +958,11 @@ class RedisRoot:
     
     def _get_allowed_model_params(self, model, params):
         model_attrs = model.get_class_fields()
-        allowed_params = {}
-        for param_name in params.keys():
-            if param_name in model_attrs.keys():
-                allowed_params[param_name] = params[param_name]
+        allowed_params = {
+            param_name: params[param_name]
+            for param_name in params.keys()
+            if param_name in model_attrs.keys()
+        }
         return allowed_params
     
     ### HELPERS ###
@@ -1130,5 +1160,3 @@ class RedisModel:
             return meta
         else:
             raise Exception(f'{name} has no field {field_name}')
-
-

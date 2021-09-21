@@ -63,7 +63,7 @@ class ModelWithOverriddenSave(RedisModel):
         new_value = 1
         all_instances = redis_root.get(ModelWithOverriddenSave)
         if all_instances:
-            max_value = max(list(map(lambda instance: instance['multiplied_max_field'], all_instances)))
+            max_value = max(map(lambda instance: instance['multiplied_max_field'], all_instances))
             new_value = max_value * 2
         self.set(multiplied_max_field=new_value)
         return super().save()
@@ -79,8 +79,13 @@ class InheritanceTestModel(SomeAbstractModel):
 
 def clean_db_after_test(connection_pool, prefix):
     redis_instance = redis.Redis(connection_pool=connection_pool)
-    for key in redis_instance.keys(f'{prefix}:*'):
-        redis_instance.delete(key)
+    keys_to_delete = [
+        *list(redis_instance.keys(f'{prefix}*')),
+        *list(redis_instance.keys(f'*{prefix}')),
+        *list(redis_instance.keys(f'*{prefix}*')),
+    ]
+    if keys_to_delete:
+        redis_instance.delete(*keys_to_delete)
 
 
 def basic_test(connection_pool, prefix):
@@ -197,6 +202,8 @@ def order_test(connection_pool, prefix):
         task_challenges = redis_root.get(TaskChallenge)
         first_task_challenge = redis_root.order(task_challenges, 'id')[0]
         last_task_challenge = redis_root.order(task_challenges, '-id')[0]
+        print(first_task_challenge['id'])
+        print(last_task_challenge['id'])
         if first_task_challenge['id'] == 1 and last_task_challenge['id'] == len(task_challenges):
             have_exception = False
     except BaseException as ex:
@@ -278,10 +285,11 @@ def redis_foreign_key_test(connection_pool, prefix):
     redis_root = RedisRoot(
         prefix=prefix,
         connection_pool=connection_pool,
-        ignore_deserialization_errors=True
+        ignore_deserialization_errors=False
     )
     have_exception = True
     try:
+        
         bot_session_1 = BotSession(
             redis_root=redis_root,
         ).save()
@@ -434,105 +442,105 @@ def list_test(connection_pool, prefix):
 def non_blocking_test(connection_pool, prefix):
     have_exception = True
     
-    # try:
-    
-    def task(data_count, use_non_blocking):
-        connection_pool = redis.ConnectionPool(
-            host=os.environ['REDIS_HOST'],
-            port=os.environ['REDIS_PORT'],
-            db=0,
-            decode_responses=True
-        )
-        redis_root = RedisRoot(
-            prefix=prefix,
-            connection_pool=connection_pool,
-            ignore_deserialization_errors=True
-        )
+    try:
         
-        for i in range(data_count):
-            redis_root.create(
-                ListCheckModel,
-                redis_list=['update_list']
+        def task(data_count, use_non_blocking):
+            connection_pool = redis.ConnectionPool(
+                host=os.environ['REDIS_HOST'],
+                port=os.environ['REDIS_PORT'],
+                db=0,
+                decode_responses=True
             )
-            redis_root.create(
-                ListCheckModel,
-                redis_list=['delete_list']
+            redis_root = RedisRoot(
+                prefix=prefix,
+                connection_pool=connection_pool,
+                ignore_deserialization_errors=True
             )
-        
-        def create_list():
-            if use_non_blocking:
-                list_check_model_instance = redis_root.create_nb(
-                    ListCheckModel,
-                    redis_list=['create_list']
-                )
-            else:
-                list_check_model_instance = redis_root.create(
-                    ListCheckModel,
-                    redis_list=['create_list']
-                )
-        
-        def update_list():
-            to_update = redis_root.get(
-                ListCheckModel,
-                redis_list=['update_list']
-            )
-            if use_non_blocking:
-                updated_instance = redis_root.update_nb(
-                    ListCheckModel,
-                    to_update,
-                    redis_list=['now_updated_list']
-                )
-            else:
-                updated_instance = redis_root.update(
-                    ListCheckModel,
-                    to_update,
-                    redis_list=['now_updated_list']
-                )
-        
-        def delete_list():
-            to_delete = redis_root.get(
-                ListCheckModel,
-                redis_list=['delete_list']
-            )
-            if use_non_blocking:
-                redis_root.delete_nb(
-                    ListCheckModel,
-                    to_delete,
-                )
-            else:
-                redis_root.delete(
-                    ListCheckModel,
-                    to_delete,
-                )
-        
-        tests = [
-            create_list,
-            update_list,
-            delete_list,
-        ]
-        for test in tests:
+            
             for i in range(data_count):
-                test()
-    
-    data_count = 100
-    clean_db_after_test(connection_pool, prefix)
-    nb_started_in = datetime.datetime.now()
-    task(data_count, True)
-    nb_ended_in = datetime.datetime.now()
-    nb_time = (nb_ended_in - nb_started_in).total_seconds()
-    clean_db_after_test(connection_pool, prefix)
-    b_started_in = datetime.datetime.now()
-    task(data_count, False)
-    b_ended_in = datetime.datetime.now()
-    b_time = (b_ended_in - b_started_in).total_seconds()
-    clean_db_after_test(connection_pool, prefix)
-    
-    nb_percent = round((nb_time / b_time - 1) * 100, 2)
-    nb_symbol = ('+' if nb_percent > 0 else '')
-    print(f'Non blocking gives {nb_symbol}{nb_percent}% efficiency')
-    have_exception = False
-    # except BaseException as ex:
-    #     print(ex)
+                redis_root.create(
+                    ListCheckModel,
+                    redis_list=['update_list']
+                )
+                redis_root.create(
+                    ListCheckModel,
+                    redis_list=['delete_list']
+                )
+            
+            def create_list():
+                if use_non_blocking:
+                    list_check_model_instance = redis_root.create_nb(
+                        ListCheckModel,
+                        redis_list=['create_list']
+                    )
+                else:
+                    list_check_model_instance = redis_root.create(
+                        ListCheckModel,
+                        redis_list=['create_list']
+                    )
+            
+            def update_list():
+                to_update = redis_root.get(
+                    ListCheckModel,
+                    redis_list=['update_list']
+                )
+                if use_non_blocking:
+                    updated_instance = redis_root.update_nb(
+                        ListCheckModel,
+                        to_update,
+                        redis_list=['now_updated_list']
+                    )
+                else:
+                    updated_instance = redis_root.update(
+                        ListCheckModel,
+                        to_update,
+                        redis_list=['now_updated_list']
+                    )
+            
+            def delete_list():
+                to_delete = redis_root.get(
+                    ListCheckModel,
+                    redis_list=['delete_list']
+                )
+                if use_non_blocking:
+                    redis_root.delete_nb(
+                        ListCheckModel,
+                        to_delete,
+                    )
+                else:
+                    redis_root.delete(
+                        ListCheckModel,
+                        to_delete,
+                    )
+            
+            tests = [
+                create_list,
+                update_list,
+                delete_list,
+            ]
+            for test in tests:
+                for i in range(data_count):
+                    test()
+        
+        data_count = 100
+        clean_db_after_test(connection_pool, prefix)
+        nb_started_in = datetime.datetime.now()
+        task(data_count, True)
+        nb_ended_in = datetime.datetime.now()
+        nb_time = (nb_ended_in - nb_started_in).total_seconds()
+        clean_db_after_test(connection_pool, prefix)
+        b_started_in = datetime.datetime.now()
+        task(data_count, False)
+        b_ended_in = datetime.datetime.now()
+        b_time = (b_ended_in - b_started_in).total_seconds()
+        clean_db_after_test(connection_pool, prefix)
+        
+        nb_percent = round((nb_time / b_time - 1) * 100, 2)
+        nb_symbol = ('+' if nb_percent > 0 else '')
+        print(f'Non blocking gives {nb_symbol}{nb_percent}% efficiency')
+        have_exception = False
+    except BaseException as ex:
+        print(ex)
     
     clean_db_after_test(connection_pool, prefix)
     return have_exception
@@ -555,6 +563,7 @@ def foreign_key_test(connection_pool, prefix):
             ForeignKeyCheckModel,
             task_challenge=task_challenge
         )
+        print(foreign_key_check_instance)
         # Check really created
         task_challenge_qs = redis_root.get(TaskChallenge, task_id=task_id)
         if len(task_challenge_qs) != 1:
@@ -562,10 +571,12 @@ def foreign_key_test(connection_pool, prefix):
         else:
             task_challenge = task_challenge_qs[0]
             foreign_key_check_instance_qs = redis_root.get(ForeignKeyCheckModel, task_challenge=task_challenge)
+            print(foreign_key_check_instance_qs)
             if len(foreign_key_check_instance_qs) != 1:
                 have_exception = True
             else:
                 foreign_key_check_instance = foreign_key_check_instance_qs[0]
+                print(foreign_key_check_instance['task_challenge']['task_id'])
                 if foreign_key_check_instance['task_challenge']['task_id'] != task_id:
                     have_exception = True
     except BaseException as ex:
@@ -602,7 +613,13 @@ def many_to_many_test(connection_pool, prefix):
             have_exception = True
         else:
             many_to_many_check_instance = many_to_many_check_instances_qs[0]
-            if many_to_many_check_instance['task_challenges'] != task_challenges:
+            if set([
+                task_challenge['id']
+                for task_challenge in many_to_many_check_instance['task_challenges']
+            ]) != set([
+                task_challenge['id']
+                for task_challenge in task_challenges
+            ]):
                 have_exception = True
     except BaseException as ex:
         print(ex)
@@ -636,7 +653,7 @@ def inheritance_test(connection_pool, prefix):
     redis_root = RedisRoot(
         prefix=prefix,
         connection_pool=connection_pool,
-        ignore_deserialization_errors=True,
+        ignore_deserialization_errors=False,
     )
     have_exception = False
     try:
@@ -763,17 +780,27 @@ def filter_performace_test(connection_pool, prefix):
         ignore_deserialization_errors=True,
         use_keys=True
     )
-    time_start = datetime.datetime.now()
-    for i in range(100):
-        task_challenges_qs = redis_root.create(TaskChallenge, account_checks_count=i)
-    time_end = datetime.datetime.now()
-    print((time_end - time_start).total_seconds())
-    time_start = datetime.datetime.now()
-    for i in range(100):
-        task_challenges_qs = redis_root.get(TaskChallenge, account_checks_count=i)
-    time_end = datetime.datetime.now()
-    print((time_end - time_start).total_seconds())
-    
+    clean_db_after_test(connection_pool, prefix)
+    execs_count = 11
+    count = 100
+    completion_time_list = []
+    for exec in range(execs_count):
+        time_start = datetime.datetime.now()
+        for i in range(100):
+            task_challenges_qs = redis_root.create(TaskChallenge, account_checks_count=i)
+        # time_end = datetime.datetime.now()
+        # print((time_end - time_start).total_seconds())
+        # time_start = datetime.datetime.now()
+        for i in range(100):
+            task_challenges_qs = redis_root.get(TaskChallenge, account_checks_count=i)
+        time_end = datetime.datetime.now()
+        completion_time_list.append((time_end - time_start).total_seconds())
+    first_test = completion_time_list[0]
+    last_test = completion_time_list[-1]
+    print(f'0 stored instances -> {(execs_count - 1) * count} stored instances changes time like:\n'
+          f'{"s -> ".join((str(completion_time) for completion_time in completion_time_list))}s\n'
+          f'+{(last_test / first_test - 1) * 100}% of time spent')
+    clean_db_after_test(connection_pool, prefix)
     return have_exception
 
 
